@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Torus Drawing Pane</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main id="app">
+    <canvas id="drawingCanvas" aria-label="Infinite torus drawing canvas"></canvas>
+
+    <section id="toolbar" aria-label="Drawing controls">
+      <div class="tool-group">
+        <button id="penButton" class="tool-button active" title="Pen — shortcut 1 or P">Pen</button>
+        <button id="lineButton" class="tool-button" title="Line — shortcut 2 or L. Shift snaps angle; Alt/Option draws from center.">Line</button>
+        <button id="panButton" class="tool-button" title="Pan / move view — shortcut 3 or V. Hold Space for temporary pan.">Pan</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="tool-group compact-actions">
+        <button id="undoButton" class="ghost-button" title="Undo — Ctrl/Cmd+Z">Undo</button>
+        <button id="redoButton" class="ghost-button" title="Redo — Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo</button>
+        <button id="clearButton" class="ghost-button danger" title="Clear drawing">Clear</button>
+      </div>
+
+      <div class="divider"></div>
+
+      <label class="control-label color-control">
+        <span>Color</span>
+        <input id="colorInput" type="color" value="#111111" />
+      </label>
+
+      <label class="control-label small-input">
+        <span>Size</span>
+        <input id="sizeInput" type="number" min="1" max="300" value="4" />
+      </label>
+
+      <div class="divider"></div>
+
+      <button id="geometryButton" class="ghost-button" title="Edit displacement vectors — shortcut G">Surface</button>
+      <label class="upload-button" title="Upload a fixed screen background image — shortcut I">
+        Image
+        <input id="backgroundInput" type="file" accept="image/*" />
+      </label>
+      <button id="removeBackgroundButton" class="ghost-button" title="Remove background image">No image</button>
+    </section>
+
+    <section id="geometryPanel" class="panel" aria-label="Displacement vector controls">
+      <div class="panel-title">Surface</div>
+      <p class="panel-copy">
+        Copies use v1 = (a1, b1) and v2 = (a2, b2). Both repeats on gives a torus; one repeat gives a cylinder; both off gives a normal plane. Changes apply only when you click Update surface.
+      </p>
+      <div class="vector-grid">
+        <label>a1 <input id="a1Input" type="number" value="600" step="10" /></label>
+        <label>b1 <input id="b1Input" type="number" value="0" step="10" /></label>
+        <label>a2 <input id="a2Input" type="number" value="0" step="10" /></label>
+        <label>b2 <input id="b2Input" type="number" value="420" step="10" /></label>
+      </div>
+
+      <div class="surface-options" title="Both repeats on = torus. One repeat on = cylinder. Both off = normal plane.">
+        <label><input id="repeatV1Input" type="checkbox" checked /> Repeat v1</label>
+        <label><input id="repeatV2Input" type="checkbox" checked /> Repeat v2</label>
+        <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
+      </div>
+      <div class="panel-actions">
+        <button id="resetGeometryButton" class="ghost-button">Reset fields</button>
+        <button id="centerViewButton" class="ghost-button">Center</button>
+        <button id="updateSurfaceButton" class="primary-button">Update surface</button>
+      </div>
+    </section>
+
+    <aside id="zoomRail" aria-label="Zoom controls">
+      <button id="zoomInButton" title="Zoom in — shortcut +">+</button>
+      <input id="zoomSlider" type="range" min="0" max="100" value="48" orient="vertical" />
+      <button id="zoomOutButton" title="Zoom out — shortcut −">−</button>
+    </aside>
+
+    <button id="helpButton" class="floating-help-button" aria-label="Show shortcuts" title="Show shortcuts">?</button>
+
+    <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">
+      <div class="panel-title">Shortcuts</div>
+      <div class="shortcut-grid">
+        <div><kbd>1</kbd> or <kbd>P</kbd></div><div>Pen</div>
+        <div><kbd>2</kbd> or <kbd>L</kbd></div><div>Line</div>
+        <div><kbd>3</kbd> or <kbd>V</kbd></div><div>Pan</div>
+        <div><kbd>C</kbd></div><div>Clear drawing</div>
+        <div><kbd>Space</kbd></div><div>Temporary pan</div>
+        <div><kbd>+</kbd> / <kbd>-</kbd></div><div>Zoom in / out</div>
+        <div><kbd>0</kbd></div><div>Center view</div>
+        <div><kbd>G</kbd></div><div>Toggle surface panel</div>
+        <div><kbd>U</kbd></div><div>Update surface</div>
+        <div><kbd>H</kbd></div><div>Toggle grid</div>
+        <div><kbd>I</kbd></div><div>Upload image</div>
+        <div><kbd>Esc</kbd></div><div>Close panels</div>
+        <div><kbd>Ctrl/Cmd + Z</kbd></div><div>Undo</div>
+        <div><kbd>Ctrl/Cmd + Shift + Z</kbd></div><div>Redo</div>
+      </div>
+    </section>
+
+    <div id="status" aria-live="polite"></div>
+  </main>
+
+  <script src="drawing.js"></script>
+</body>
+</html>

@@ -1,0 +1,13 @@
+{
+  "name": "torus-drawing-app",
+  "version": "1.0.0",
+  "description": "A minimalist object-based drawing pane with torus/cylinder displacement rendering.",
+  "private": true,
+  "scripts": {
+    "start": "vite --host 0.0.0.0",
+    "dev": "vite --host 0.0.0.0"
+  },
+  "devDependencies": {
+    "vite": "latest"
+  }
+}
