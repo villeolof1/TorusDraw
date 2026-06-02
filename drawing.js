@@ -6,7 +6,11 @@ const ctx = canvas.getContext("2d", { alpha: false });
 
 const penButton = document.getElementById("penButton");
 const lineButton = document.getElementById("lineButton");
+const eraseButton = document.getElementById("eraseButton");
 const panButton = document.getElementById("panButton");
+const eraserOptions = document.getElementById("eraserOptions");
+const eraseObjectButton = document.getElementById("eraseObjectButton");
+const eraseRubButton = document.getElementById("eraseRubButton");
 const undoButton = document.getElementById("undoButton");
 const redoButton = document.getElementById("redoButton");
 const clearButton = document.getElementById("clearButton");
@@ -22,12 +26,17 @@ const removeBackgroundButton = document.getElementById("removeBackgroundButton")
 const resetGeometryButton = document.getElementById("resetGeometryButton");
 const centerViewButton = document.getElementById("centerViewButton");
 const updateSurfaceButton = document.getElementById("updateSurfaceButton");
+const fitCellButton = document.getElementById("fitCellButton");
+const exportButton = document.getElementById("exportButton");
+const saveProjectButton = document.getElementById("saveProjectButton");
+const projectInput = document.getElementById("projectInput");
 const zoomSlider = document.getElementById("zoomSlider");
 const zoomInButton = document.getElementById("zoomInButton");
 const zoomOutButton = document.getElementById("zoomOutButton");
 const status = document.getElementById("status");
 const helpButton = document.getElementById("helpButton");
 const helpPanel = document.getElementById("helpPanel");
+const angleHint = document.getElementById("angleHint");
 
 const a1Input = document.getElementById("a1Input");
 const b1Input = document.getElementById("b1Input");
@@ -39,6 +48,9 @@ const MAX_ZOOM = 7.5;
 const REPEAT_PADDING = 4;
 const DET_MIN = 0.001;
 const VECTOR_REPEAT_MIN_LENGTH = 1;
+const STORAGE_KEY = "torus-drawing-app.autosave.v3";
+const SNAP_STEP_RADIANS = Math.PI / 12;
+const DEFAULT_HIDE_GRID = false;
 const DEFAULT_SURFACE = {
   v1: { x: 600, y: 0 },
   v2: { x: 0, y: 420 },
@@ -64,6 +76,9 @@ let currentObject = null;
 let panStart = null;
 let viewStart = null;
 let spaceIsDown = false;
+let eraserMode = "object";
+let eraseBeforeObjects = null;
+let eraseChanged = false;
 
 let view = {
   x: 300,
@@ -75,7 +90,7 @@ let surface = cloneSurface(DEFAULT_SURFACE);
 
 let background = {
   image: null,
-  url: null,
+  dataUrl: null,
   naturalWidth: 1,
   naturalHeight: 1
 };
@@ -84,6 +99,8 @@ let renderQueued = false;
 let previewObject = null;
 let previewQueued = false;
 let statusTimer = null;
+let autosaveTimer = null;
+let loadedAutosave = false;
 
 function cloneSurface(value) {
   return {
@@ -139,6 +156,19 @@ function pointFromEvent(event) {
   };
 }
 
+function pointerPressure(event) {
+  if (event.pointerType === "pen" && Number.isFinite(event.pressure) && event.pressure > 0) {
+    return clamp(event.pressure, 0, 1);
+  }
+  return 0.5;
+}
+
+function worldPointFromEvent(event) {
+  const world = screenToWorld(pointFromEvent(event));
+  world.pressure = pointerPressure(event);
+  return world;
+}
+
 function screenToWorld(point) {
   return {
     x: (point.x - cssWidth / 2) / view.zoom + view.x,
@@ -180,8 +210,11 @@ function chooseTool(newTool) {
   tool = newTool;
   penButton.classList.toggle("active", tool === "pen");
   lineButton.classList.toggle("active", tool === "line");
+  eraseButton.classList.toggle("active", tool === "erase");
   panButton.classList.toggle("active", tool === "pan");
+  eraserOptions.hidden = tool !== "erase";
   canvas.classList.toggle("panning", tool === "pan" || spaceIsDown);
+  hideAngleHint();
 }
 
 function length(vector) {
@@ -535,6 +568,42 @@ function drawGrid() {
   ctx.restore();
 }
 
+function pressureScale(point) {
+  const pressure = Number.isFinite(point.pressure) ? point.pressure : 0.5;
+  return 0.9 + pressure * 0.2;
+}
+
+function midPoint(a, b) {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    pressure: ((Number.isFinite(a.pressure) ? a.pressure : 0.5) + (Number.isFinite(b.pressure) ? b.pressure : 0.5)) / 2
+  };
+}
+
+function drawPenStroke(object) {
+  const points = object.points;
+  if (points.length < 2) return;
+
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+
+  for (let i = 0; i < points.length - 1; i++) {
+    const current = points[i];
+    const next = points[i + 1];
+    const previous = points[Math.max(0, i - 1)];
+    const start = i === 0 ? current : midPoint(previous, current);
+    const end = i === points.length - 2 ? next : midPoint(current, next);
+    const widthPoint = midPoint(current, next);
+
+    ctx.lineWidth = object.size * pressureScale(widthPoint);
+    ctx.beginPath();
+    ctx.moveTo(start.x, start.y);
+    ctx.quadraticCurveTo(current.x, current.y, end.x, end.y);
+    ctx.stroke();
+  }
+}
+
 function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
   if (!object || object.points.length < 2) return;
 
@@ -543,7 +612,6 @@ function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
   ctx.save();
   ctx.translate(d.x, d.y);
   ctx.strokeStyle = object.color;
-  ctx.lineWidth = object.size;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
 
@@ -551,28 +619,18 @@ function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
     ctx.globalAlpha = 0.72;
   }
 
-  ctx.beginPath();
-  ctx.moveTo(object.points[0].x, object.points[0].y);
-
-  if (object.type === "pen" && object.points.length > 2) {
-    for (let i = 1; i < object.points.length - 1; i++) {
-      const current = object.points[i];
-      const next = object.points[i + 1];
-      const midPoint = {
-        x: (current.x + next.x) / 2,
-        y: (current.y + next.y) / 2
-      };
-      ctx.quadraticCurveTo(current.x, current.y, midPoint.x, midPoint.y);
-    }
-
-    const last = object.points[object.points.length - 1];
-    ctx.lineTo(last.x, last.y);
-  } else {
-    for (let i = 1; i < object.points.length; i++) {
-      ctx.lineTo(object.points[i].x, object.points[i].y);
-    }
+  if (object.type === "pen") {
+    drawPenStroke(object);
+    ctx.restore();
+    return;
   }
 
+  ctx.lineWidth = object.size;
+  ctx.beginPath();
+  ctx.moveTo(object.points[0].x, object.points[0].y);
+  for (let i = 1; i < object.points.length; i++) {
+    ctx.lineTo(object.points[i].x, object.points[i].y);
+  }
   ctx.stroke();
   ctx.restore();
 }
@@ -613,6 +671,7 @@ function addObject(object) {
 
   redoStack = [];
   updateHistoryButtons();
+  scheduleAutosave();
   requestRender();
 }
 
@@ -628,8 +687,13 @@ function undo() {
     objects = cloneObjects(action.before);
   }
 
+  if (action.type === "replaceAll") {
+    objects = cloneObjects(action.before);
+  }
+
   redoStack.push(action);
   updateHistoryButtons();
+  scheduleAutosave();
   requestRender();
 }
 
@@ -645,29 +709,186 @@ function redo() {
     objects = [];
   }
 
+  if (action.type === "replaceAll") {
+    objects = cloneObjects(action.after);
+  }
+
   undoStack.push(action);
   updateHistoryButtons();
+  scheduleAutosave();
   requestRender();
 }
 
-function linePointsFromModifiers(center, pointer, event) {
+function lineDataFromModifiers(center, pointer, event) {
   let delta = sub(pointer, center);
+  let angleDegrees = null;
 
   if (event.shiftKey) {
-    const length = Math.hypot(delta.x, delta.y);
+    const segmentLength = Math.hypot(delta.x, delta.y);
     const angle = Math.atan2(delta.y, delta.x);
-    const snapped = Math.round(angle / (Math.PI / 4)) * (Math.PI / 4);
+    const snapped = Math.round(angle / SNAP_STEP_RADIANS) * SNAP_STEP_RADIANS;
     delta = {
-      x: Math.cos(snapped) * length,
-      y: Math.sin(snapped) * length
+      x: Math.cos(snapped) * segmentLength,
+      y: Math.sin(snapped) * segmentLength
     };
+    angleDegrees = ((Math.round(snapped * 180 / Math.PI) % 360) + 360) % 360;
   }
 
-  if (event.altKey) {
-    return [sub(center, delta), add(center, delta)];
+  const points = event.altKey
+    ? [sub(center, delta), add(center, delta)]
+    : [center, add(center, delta)];
+
+  return { points, angleDegrees };
+}
+
+function showAngleHint(screenPoint, angleDegrees) {
+  if (angleDegrees === null || angleDegrees === undefined) {
+    hideAngleHint();
+    return;
+  }
+  angleHint.textContent = `${angleDegrees}°`;
+  angleHint.style.left = `${screenPoint.x}px`;
+  angleHint.style.top = `${screenPoint.y}px`;
+  angleHint.classList.add("visible");
+}
+
+function hideAngleHint() {
+  angleHint.classList.remove("visible");
+}
+
+function setEraserMode(nextMode) {
+  eraserMode = nextMode;
+  eraseObjectButton.classList.toggle("active", eraserMode === "object");
+  eraseRubButton.classList.toggle("active", eraserMode === "rub");
+}
+
+function distanceToSegment(point, a, b) {
+  const ab = sub(b, a);
+  const ap = sub(point, a);
+  const ab2 = ab.x * ab.x + ab.y * ab.y;
+  if (ab2 === 0) return Math.hypot(point.x - a.x, point.y - a.y);
+  const t = clamp((ap.x * ab.x + ap.y * ab.y) / ab2, 0, 1);
+  const closest = { x: a.x + ab.x * t, y: a.y + ab.y * t };
+  return Math.hypot(point.x - closest.x, point.y - closest.y);
+}
+
+function hitObject(object, point, radius) {
+  const threshold = radius + (object.size || 1) / 2;
+  for (let i = 1; i < object.points.length; i++) {
+    if (distanceToSegment(point, object.points[i - 1], object.points[i]) <= threshold) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function densifyPoints(points, maxStep = 6) {
+  if (points.length < 2) return points.map(point => ({ ...point }));
+  const dense = [{ ...points[0] }];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const distance = Math.hypot(b.x - a.x, b.y - a.y);
+    const steps = Math.max(1, Math.ceil(distance / maxStep));
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      dense.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        pressure: (Number.isFinite(a.pressure) ? a.pressure : 0.5) + ((Number.isFinite(b.pressure) ? b.pressure : 0.5) - (Number.isFinite(a.pressure) ? a.pressure : 0.5)) * t
+      });
+    }
+  }
+  return dense;
+}
+
+function splitObjectByEraser(object, point, radius) {
+  const samples = densifyPoints(object.points, Math.max(4, (object.size || 1) / 2));
+  const threshold = radius + (object.size || 1) * 0.55;
+  let changed = false;
+  const chunks = [];
+  let current = [];
+
+  for (const sample of samples) {
+    const remove = Math.hypot(sample.x - point.x, sample.y - point.y) <= threshold;
+    if (remove) {
+      changed = true;
+      if (current.length >= 2) chunks.push(current);
+      current = [];
+    } else {
+      current.push(sample);
+    }
   }
 
-  return [center, add(center, delta)];
+  if (current.length >= 2) chunks.push(current);
+  if (!changed) return { changed: false, objects: [object] };
+
+  return {
+    changed: true,
+    objects: chunks.map(chunk => ({
+      ...object,
+      id: nextObjectId++,
+      type: "pen",
+      points: chunk.map(sample => ({ ...sample }))
+    }))
+  };
+}
+
+function eraserRadius() {
+  return Math.max(10 / view.zoom, (Number(sizeInput.value) || 4) / 2);
+}
+
+function localPointForHit(object, worldPoint, radius) {
+  for (const offset of getObjectOffsets(object)) {
+    const d = displacement(offset.i, offset.j);
+    const localPoint = sub(worldPoint, d);
+    if (hitObject(object, localPoint, radius)) {
+      return localPoint;
+    }
+  }
+  return null;
+}
+
+function applyEraserAt(point) {
+  const radius = eraserRadius();
+  let changed = false;
+
+  if (eraserMode === "object") {
+    const nextObjects = objects.filter(object => localPointForHit(object, point, radius) === null);
+    changed = nextObjects.length !== objects.length;
+    if (changed) objects = nextObjects;
+  } else {
+    const nextObjects = [];
+    for (const object of objects) {
+      const localPoint = localPointForHit(object, point, radius);
+      if (!localPoint) {
+        nextObjects.push(object);
+        continue;
+      }
+
+      const result = splitObjectByEraser(object, localPoint, radius);
+      if (result.changed) changed = true;
+      nextObjects.push(...result.objects);
+    }
+    if (changed) objects = nextObjects;
+  }
+
+  if (changed) {
+    eraseChanged = true;
+    requestRender();
+  }
+}
+
+function commitEraseIfNeeded() {
+  if (!eraseChanged || !eraseBeforeObjects) return;
+  undoStack.push({
+    type: "replaceAll",
+    before: eraseBeforeObjects,
+    after: cloneObjects(objects)
+  });
+  redoStack = [];
+  updateHistoryButtons();
+  scheduleAutosave();
 }
 
 function startDrawing(event) {
@@ -684,8 +905,16 @@ function startDrawing(event) {
     return;
   }
 
+  if (tool === "erase") {
+    isDrawing = true;
+    eraseBeforeObjects = cloneObjects(objects);
+    eraseChanged = false;
+    applyEraserAt(screenToWorld(screenPoint));
+    return;
+  }
+
   isDrawing = true;
-  startPoint = screenToWorld(screenPoint);
+  startPoint = worldPointFromEvent(event);
   lastPoint = startPoint;
 
   currentObject = {
@@ -709,22 +938,32 @@ function continueDrawing(event) {
     return;
   }
 
-  if (!isDrawing || !currentObject) return;
+  if (!isDrawing) return;
   event.preventDefault();
 
-  const point = screenToWorld(screenPoint);
+  if (tool === "erase") {
+    applyEraserAt(screenToWorld(screenPoint));
+    return;
+  }
+
+  if (!currentObject) return;
+
+  const point = worldPointFromEvent(event);
 
   if (tool === "pen") {
     currentObject.points.push(point);
     lastPoint = point;
+    hideAngleHint();
     requestRenderWithPreview(currentObject);
   }
 
   if (tool === "line") {
+    const lineData = lineDataFromModifiers(startPoint, point, event);
     const preview = {
       ...currentObject,
-      points: linePointsFromModifiers(startPoint, point, event)
+      points: lineData.points
     };
+    showAngleHint(screenPoint, lineData.angleDegrees);
     requestRenderWithPreview(preview);
   }
 }
@@ -752,14 +991,24 @@ function stopDrawing(event) {
     return;
   }
 
-  if (!isDrawing || !currentObject) return;
+  if (!isDrawing) return;
   event.preventDefault();
   isDrawing = false;
 
-  const endPoint = screenToWorld(pointFromEvent(event));
+  if (tool === "erase") {
+    commitEraseIfNeeded();
+    eraseBeforeObjects = null;
+    eraseChanged = false;
+    requestRender();
+    return;
+  }
+
+  if (!currentObject) return;
+
+  const endPoint = worldPointFromEvent(event);
 
   if (tool === "line") {
-    currentObject.points = linePointsFromModifiers(startPoint, endPoint, event);
+    currentObject.points = lineDataFromModifiers(startPoint, endPoint, event).points;
   }
 
   if (currentObject.points.length >= 2 && objectDistance(currentObject) > 0.5) {
@@ -768,6 +1017,7 @@ function stopDrawing(event) {
     requestRender();
   }
 
+  hideAngleHint();
   previewObject = null;
   currentObject = null;
   startPoint = null;
@@ -794,6 +1044,7 @@ function clearDrawing() {
   objects = [];
   redoStack = [];
   updateHistoryButtons();
+  scheduleAutosave();
   requestRender();
 }
 
@@ -827,6 +1078,27 @@ function centerView() {
   const center = add(scale(surface.v1, 0.5), scale(surface.v2, 0.5));
   view.x = center.x;
   view.y = center.y;
+  requestRender();
+}
+
+function fitCellToView() {
+  const corners = [
+    { x: 0, y: 0 },
+    surface.v1,
+    surface.v2,
+    add(surface.v1, surface.v2)
+  ];
+  const minX = Math.min(...corners.map(point => point.x));
+  const maxX = Math.max(...corners.map(point => point.x));
+  const minY = Math.min(...corners.map(point => point.y));
+  const maxY = Math.max(...corners.map(point => point.y));
+  const width = Math.max(1, maxX - minX);
+  const height = Math.max(1, maxY - minY);
+  view.x = (minX + maxX) / 2;
+  view.y = (minY + maxY) / 2;
+  view.zoom = clamp(Math.min(cssWidth / (width * 1.18), cssHeight / (height * 1.18)), MIN_ZOOM, MAX_ZOOM);
+  syncZoomSlider();
+  setStatus("Cell fitted.");
   requestRender();
 }
 
@@ -873,19 +1145,27 @@ function validateSurface(next) {
   return null;
 }
 
-function applySurfaceFromControls() {
-  const next = readSurfaceFromControls();
+function clearForSurfaceChange() {
+  objects = [];
+  undoStack = [];
+  redoStack = [];
+  nextObjectId = 1;
+  updateHistoryButtons();
+}
+
+function applySurface(next, message = "Surface updated.") {
   const error = validateSurface(next);
 
   if (error) {
     setStatus(error);
     writeSurfaceToControls(surface);
-    return;
+    return false;
   }
 
-  if (surfacesEqual(next, surface)) {
-    setStatus("Surface already up to date.");
-    return;
+  const surfaceWillChange = !surfacesEqual(next, surface);
+  if (!surfaceWillChange) {
+    writeSurfaceToControls(surface);
+    return true;
   }
 
   if (objects.length > 0) {
@@ -896,60 +1176,195 @@ function applySurfaceFromControls() {
     if (!proceed) {
       writeSurfaceToControls(surface);
       setStatus("Surface unchanged.");
-      return;
+      return false;
     }
 
-    objects = [];
-    undoStack = [];
-    redoStack = [];
-    nextObjectId = 1;
-    updateHistoryButtons();
+    clearForSurfaceChange();
   }
 
   surface = cloneSurface(next);
+  writeSurfaceToControls(surface);
   centerView();
-  setDefaultStatus();
+  setStatus(message);
+  scheduleAutosave();
   requestRender();
+  return true;
+}
+
+function applySurfaceFromControls() {
+  applySurface(readSurfaceFromControls(), "Surface updated.");
 }
 
 function resetSurfaceFields() {
-  writeSurfaceToControls(DEFAULT_SURFACE);
+  const previousHideGrid = hideGridInput.checked;
+  const applied = applySurface(cloneSurface(DEFAULT_SURFACE), "Surface reset.");
 
-  if (hideGridInput.checked) {
-    hideGridInput.checked = false;
+  if (applied) {
+    hideGridInput.checked = DEFAULT_HIDE_GRID;
     requestRender();
+    scheduleAutosave();
+  } else {
+    hideGridInput.checked = previousHideGrid;
   }
+}
 
-  setStatus("Default rectangular surface loaded in the fields. Click Update surface to apply.");
+function setBackgroundFromDataUrl(dataUrl) {
+  return new Promise(resolve => {
+    if (!dataUrl) {
+      background = {
+        image: null,
+        dataUrl: null,
+        naturalWidth: 1,
+        naturalHeight: 1
+      };
+      resolve();
+      return;
+    }
+
+    const image = new Image();
+    image.onload = () => {
+      background = {
+        image,
+        dataUrl,
+        naturalWidth: image.naturalWidth || 1,
+        naturalHeight: image.naturalHeight || 1
+      };
+      resolve();
+    };
+    image.onerror = () => resolve();
+    image.src = dataUrl;
+  });
 }
 
 function loadBackground(file) {
   if (!file) return;
-  const url = URL.createObjectURL(file);
-  const image = new Image();
-  image.onload = () => {
-    if (background.url) URL.revokeObjectURL(background.url);
-    background = {
-      image,
-      url,
-      naturalWidth: image.naturalWidth || 1,
-      naturalHeight: image.naturalHeight || 1
-    };
+  const reader = new FileReader();
+  reader.onload = async () => {
+    await setBackgroundFromDataUrl(reader.result);
+    setStatus("Background added.");
+    scheduleAutosave();
     requestRender();
   };
-  image.src = url;
+  reader.readAsDataURL(file);
 }
 
-function removeBackground() {
-  if (background.url) URL.revokeObjectURL(background.url);
+function removeBackground(skipStatus = false) {
   background = {
     image: null,
-    url: null,
+    dataUrl: null,
     naturalWidth: 1,
     naturalHeight: 1
   };
   backgroundInput.value = "";
+  if (!skipStatus) setStatus("Background removed.");
+  scheduleAutosave();
   requestRender();
+}
+
+function serializeProject() {
+  return {
+    version: 3,
+    surface: cloneSurface(surface),
+    hideGrid: hideGridInput.checked,
+    view: { ...view },
+    objects: cloneObjects(objects),
+    nextObjectId,
+    color: colorInput.value,
+    size: sizeInput.value,
+    backgroundDataUrl: background.dataUrl || null
+  };
+}
+
+async function restoreProject(data, silent = false) {
+  if (!data || !data.surface || !Array.isArray(data.objects)) {
+    setStatus("Could not open project file.");
+    return;
+  }
+
+  surface = cloneSurface(data.surface);
+  objects = cloneObjects(data.objects);
+  nextObjectId = Number(data.nextObjectId) || (objects.reduce((maxId, object) => Math.max(maxId, object.id || 0), 0) + 1);
+  view = data.view && Number.isFinite(data.view.zoom) ? { ...data.view } : { x: 300, y: 210, zoom: 0.9 };
+  colorInput.value = data.color || "#111111";
+  sizeInput.value = data.size || "4";
+  hideGridInput.checked = Boolean(data.hideGrid);
+  undoStack = [];
+  redoStack = [];
+  updateHistoryButtons();
+  writeSurfaceToControls(surface);
+  syncZoomSlider();
+  await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
+  requestRender();
+  if (!silent) setStatus("Project opened.");
+}
+
+function scheduleAutosave() {
+  if (autosaveTimer) clearTimeout(autosaveTimer);
+  autosaveTimer = setTimeout(() => {
+    try {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeProject()));
+    } catch (error) {
+      // Large background images can exceed browser storage limits. Manual save still works.
+    }
+  }, 250);
+}
+
+async function restoreAutosave() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (!saved) return false;
+    const data = JSON.parse(saved);
+    await restoreProject(data, true);
+    loadedAutosave = true;
+    setStatus("Restored previous drawing.");
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function saveProject() {
+  const blob = new Blob([JSON.stringify(serializeProject(), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "torus-drawing.torusdraw";
+  link.click();
+  URL.revokeObjectURL(url);
+  setStatus("Project saved.");
+}
+
+function openProjectFile(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = async () => {
+    try {
+      const data = JSON.parse(reader.result);
+      await restoreProject(data);
+      scheduleAutosave();
+    } catch (error) {
+      setStatus("Could not open project file.");
+    }
+    projectInput.value = "";
+  };
+  reader.readAsText(file);
+}
+
+function exportPNG() {
+  redraw();
+  canvas.toBlob(blob => {
+    if (!blob) {
+      setStatus("Export failed.");
+      return;
+    }
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = "torus-drawing.png";
+    link.click();
+    URL.revokeObjectURL(url);
+    setStatus("PNG exported.");
+  }, "image/png");
 }
 
 function handleWheel(event) {
@@ -978,6 +1393,12 @@ function handleKeyDown(event) {
   const isUndo = cmd && key === "z" && !event.shiftKey;
   const isRedo = cmd && (key === "y" || (event.shiftKey && key === "z"));
 
+  if (cmd && key === "s") {
+    event.preventDefault();
+    saveProject();
+    return;
+  }
+
   if (isRedo) {
     event.preventDefault();
     redo();
@@ -998,6 +1419,9 @@ function handleKeyDown(event) {
   } else if (key === "2" || key === "l") {
     event.preventDefault();
     chooseTool("line");
+  } else if (key === "4" || key === "e") {
+    event.preventDefault();
+    chooseTool("erase");
   } else if (key === "3" || key === "v") {
     event.preventDefault();
     chooseTool("pan");
@@ -1010,6 +1434,9 @@ function handleKeyDown(event) {
   } else if (key === "0") {
     event.preventDefault();
     centerView();
+  } else if (key === "f") {
+    event.preventDefault();
+    fitCellToView();
   } else if (key === "c") {
     event.preventDefault();
     clearDrawing();
@@ -1022,6 +1449,8 @@ function handleKeyDown(event) {
   } else if (key === "h") {
     event.preventDefault();
     hideGridInput.checked = !hideGridInput.checked;
+    setStatus(hideGridInput.checked ? "Grid hidden." : "Grid shown.");
+    scheduleAutosave();
     requestRender();
   } else if (key === "i") {
     event.preventDefault();
@@ -1032,6 +1461,7 @@ function handleKeyDown(event) {
   } else if (key === "escape") {
     geometryPanel.classList.remove("open");
     helpPanel.classList.remove("open");
+    hideAngleHint();
   }
 }
 
@@ -1044,14 +1474,21 @@ function handleKeyUp(event) {
 
 penButton.addEventListener("click", () => chooseTool("pen"));
 lineButton.addEventListener("click", () => chooseTool("line"));
+eraseButton.addEventListener("click", () => chooseTool("erase"));
 panButton.addEventListener("click", () => chooseTool("pan"));
+eraseObjectButton.addEventListener("click", () => setEraserMode("object"));
+eraseRubButton.addEventListener("click", () => setEraserMode("rub"));
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 clearButton.addEventListener("click", clearDrawing);
 
 repeatV1Input.addEventListener("change", () => setStatus("Repeat setting changed in the fields. Click Update surface to apply."));
 repeatV2Input.addEventListener("change", () => setStatus("Repeat setting changed in the fields. Click Update surface to apply."));
-hideGridInput.addEventListener("change", requestRender);
+hideGridInput.addEventListener("change", () => {
+  setStatus(hideGridInput.checked ? "Grid hidden." : "Grid shown.");
+  scheduleAutosave();
+  requestRender();
+});
 
 geometryButton.addEventListener("click", () => {
   geometryPanel.classList.toggle("open");
@@ -1063,9 +1500,13 @@ helpButton.addEventListener("click", () => {
 
 resetGeometryButton.addEventListener("click", resetSurfaceFields);
 centerViewButton.addEventListener("click", centerView);
+fitCellButton.addEventListener("click", fitCellToView);
 updateSurfaceButton.addEventListener("click", applySurfaceFromControls);
 backgroundInput.addEventListener("change", event => loadBackground(event.target.files[0]));
-removeBackgroundButton.addEventListener("click", removeBackground);
+removeBackgroundButton.addEventListener("click", () => removeBackground());
+exportButton.addEventListener("click", exportPNG);
+saveProjectButton.addEventListener("click", saveProject);
+projectInput.addEventListener("change", event => openProjectFile(event.target.files[0]));
 
 zoomSlider.addEventListener("input", () => setZoom(sliderValueToZoom(zoomSlider.value)));
 zoomInButton.addEventListener("click", () => setZoom(view.zoom * 1.18));
@@ -1082,8 +1523,11 @@ document.addEventListener("keyup", handleKeyUp);
 window.addEventListener("resize", resizeCanvas);
 
 writeSurfaceToControls();
+hideGridInput.checked = DEFAULT_HIDE_GRID;
 syncZoomSlider();
 updateHistoryButtons();
 setDefaultStatus();
 resizeCanvas();
 chooseTool("pen");
+setEraserMode("object");
+restoreAutosave();

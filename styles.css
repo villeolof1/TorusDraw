@@ -414,29 +414,68 @@ kbd {
   opacity: 1;
 }
 
+.eraser-options {
+  margin-left: -2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.045);
+}
 
-.surface-options {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 8px;
+.mini-toggle {
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+.mini-toggle.active {
+  background: var(--ink);
+  color: white;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
+}
+
+.panel-toggles {
   margin-top: 12px;
-  padding: 10px;
+  padding: 10px 12px;
   border-radius: 16px;
-  background: rgba(255, 255, 255, 0.46);
-  border: 1px solid rgba(0, 0, 0, 0.06);
+  background: rgba(0, 0, 0, 0.035);
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 
-.surface-options label {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 13px;
-  user-select: none;
+#angleHint {
+  position: absolute;
+  z-index: 12;
+  padding: 6px 9px;
+  border-radius: 999px;
+  background: rgba(31, 31, 31, 0.88);
+  color: white;
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+  opacity: 0;
+  transform: translate(-50%, -145%);
+  transition: opacity 100ms ease;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
 }
 
-.surface-options input[type="checkbox"] {
-  width: 16px;
-  height: 16px;
-  accent-color: var(--ink);
+#angleHint.visible {
+  opacity: 1;
+}
+
+#toolbar .upload-button input#projectInput {
+  display: none;
+}
+
+@media (max-width: 1120px) {
+  #toolbar {
+    left: 12px;
+    right: 12px;
+    transform: none;
+    overflow-x: auto;
+    justify-content: flex-start;
+    border-radius: 24px;
+  }
+
+  #toolbar::-webkit-scrollbar {
+    display: none;
+  }
 }
