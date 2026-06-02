@@ -15,12 +15,11 @@
         <button id="penButton" class="tool-button active" title="Pen — shortcut 1 or P">Pen</button>
         <button id="lineButton" class="tool-button" title="Line — shortcut 2 or L. Shift snaps to 15° increments; Alt/Option draws from center.">Line</button>
         <button id="eraseButton" class="tool-button" title="Erase — shortcut 4 or E">Erase</button>
+        <div id="eraserOptions" class="tool-group eraser-options" hidden>
+          <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
+          <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
+        </div>
         <button id="panButton" class="tool-button" title="Pan / move view — shortcut 3 or V. Hold Space for temporary pan.">Pan</button>
-      </div>
-
-      <div id="eraserOptions" class="tool-group eraser-options" hidden>
-        <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
-        <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
       </div>
 
       <div class="divider"></div>
@@ -46,7 +45,7 @@
       <div class="divider"></div>
 
       <button id="geometryButton" class="ghost-button" title="Edit displacement vectors — shortcut G">Surface</button>
-      <label class="upload-button" title="Upload a fixed screen background image — shortcut I">
+      <label class="upload-button" title="Upload an image into each surface cell — shortcut I">
         Image
         <input id="backgroundInput" type="file" accept="image/*" />
       </label>
@@ -78,8 +77,18 @@
         <label><input id="repeatV2Input" type="checkbox" checked /> Repeat v2</label>
         <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
       </div>
+
+      <div class="surface-section">
+        <div class="surface-section-title">Image in cells</div>
+        <div class="segmented-control" aria-label="Image fit mode">
+          <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
+          <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
+        </div>
+        <button id="fitSurfaceToImageButton" class="ghost-button panel-wide-button" type="button">Fit surface to image</button>
+      </div>
+
       <div class="panel-actions">
-        <button id="resetGeometryButton" class="ghost-button">Reset fields</button>
+        <button id="resetGeometryButton" class="ghost-button">Reset surface</button>
         <button id="centerViewButton" class="ghost-button">Center</button>
         <button id="fitCellButton" class="ghost-button">Fit cell</button>
         <button id="updateSurfaceButton" class="primary-button">Update surface</button>
@@ -100,6 +109,7 @@
         <div><kbd>1</kbd> or <kbd>P</kbd></div><div>Pen</div>
         <div><kbd>2</kbd> or <kbd>L</kbd></div><div>Line</div>
         <div><kbd>4</kbd> or <kbd>E</kbd></div><div>Erase</div>
+        <div><kbd>Shift + E</kbd></div><div>Toggle eraser mode</div>
         <div><kbd>3</kbd> or <kbd>V</kbd></div><div>Pan</div>
         <div><kbd>C</kbd></div><div>Clear drawing</div>
         <div><kbd>Shift</kbd></div><div>Line snap, 15° steps</div>

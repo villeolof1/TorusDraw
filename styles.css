@@ -479,3 +479,38 @@ kbd {
     display: none;
   }
 }
+
+
+.surface-section {
+  margin-top: 12px;
+  padding: 10px 12px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.surface-section-title {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 8px;
+}
+
+.segmented-control {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.055);
+}
+
+.panel-wide-button {
+  display: block;
+  width: 100%;
+  margin-top: 9px;
+  text-align: center;
+  background: rgba(255, 255, 255, 0.46);
+}
+
+.eraser-options {
+  align-self: stretch;
+}

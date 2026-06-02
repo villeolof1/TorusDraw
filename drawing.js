@@ -27,6 +27,9 @@ const resetGeometryButton = document.getElementById("resetGeometryButton");
 const centerViewButton = document.getElementById("centerViewButton");
 const updateSurfaceButton = document.getElementById("updateSurfaceButton");
 const fitCellButton = document.getElementById("fitCellButton");
+const fitSurfaceToImageButton = document.getElementById("fitSurfaceToImageButton");
+const imageCropButton = document.getElementById("imageCropButton");
+const imageStretchButton = document.getElementById("imageStretchButton");
 const exportButton = document.getElementById("exportButton");
 const saveProjectButton = document.getElementById("saveProjectButton");
 const projectInput = document.getElementById("projectInput");
@@ -51,6 +54,9 @@ const VECTOR_REPEAT_MIN_LENGTH = 1;
 const STORAGE_KEY = "torus-drawing-app.autosave.v3";
 const SNAP_STEP_RADIANS = Math.PI / 12;
 const DEFAULT_HIDE_GRID = false;
+const DEFAULT_IMAGE_FIT_MODE = "crop";
+const FIT_IMAGE_LONG_SIDE = 650;
+const MAX_CELL_IMAGE_COPIES = 2200;
 const DEFAULT_SURFACE = {
   v1: { x: 600, y: 0 },
   v2: { x: 0, y: 420 },
@@ -87,6 +93,7 @@ let view = {
 };
 
 let surface = cloneSurface(DEFAULT_SURFACE);
+let imageFitMode = DEFAULT_IMAGE_FIT_MODE;
 
 let background = {
   image: null,
@@ -446,43 +453,124 @@ function setScreenTransform() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
-function drawCoverImage(image) {
-  const imageRatio = image.naturalWidth / image.naturalHeight;
-  const viewRatio = cssWidth / cssHeight;
-
-  let drawWidth;
-  let drawHeight;
-  let x;
-  let y;
-
-  if (imageRatio > viewRatio) {
-    drawHeight = cssHeight;
-    drawWidth = drawHeight * imageRatio;
-    x = (cssWidth - drawWidth) / 2;
-    y = 0;
-  } else {
-    drawWidth = cssWidth;
-    drawHeight = drawWidth / imageRatio;
-    x = 0;
-    y = (cssHeight - drawHeight) / 2;
-  }
-
-  ctx.drawImage(image, x, y, drawWidth, drawHeight);
-}
-
 function clearScreen() {
   setScreenTransform();
   ctx.fillStyle = "#fffdf8";
   ctx.fillRect(0, 0, cssWidth, cssHeight);
+}
 
-  if (background.image) {
-    ctx.save();
-    ctx.globalAlpha = 0.58;
-    drawCoverImage(background.image);
-    ctx.globalAlpha = 1;
-    ctx.fillStyle = "rgba(255, 253, 248, 0.34)";
-    ctx.fillRect(0, 0, cssWidth, cssHeight);
-    ctx.restore();
+function cellCorners(offset) {
+  const d = displacement(offset.i, offset.j);
+  return [
+    d,
+    add(d, surface.v1),
+    add(add(d, surface.v1), surface.v2),
+    add(d, surface.v2)
+  ];
+}
+
+function clipToCell(offset) {
+  const corners = cellCorners(offset);
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.closePath();
+  ctx.clip();
+}
+
+function imageSourceCrop() {
+  const image = background.image;
+  const imageWidth = background.naturalWidth || image.naturalWidth || 1;
+  const imageHeight = background.naturalHeight || image.naturalHeight || 1;
+
+  const cellWidth = length(surface.v1);
+  const cellHeight = length(surface.v2);
+  if (cellWidth < VECTOR_REPEAT_MIN_LENGTH || cellHeight < VECTOR_REPEAT_MIN_LENGTH) return null;
+
+  if (imageFitMode === "stretch") {
+    return { sx: 0, sy: 0, sw: imageWidth, sh: imageHeight };
+  }
+
+  const cellAspect = cellWidth / cellHeight;
+  const imageAspect = imageWidth / imageHeight;
+
+  if (imageAspect > cellAspect) {
+    const sw = imageHeight * cellAspect;
+    return { sx: (imageWidth - sw) / 2, sy: 0, sw, sh: imageHeight };
+  }
+
+  const sh = imageWidth / cellAspect;
+  return { sx: 0, sy: (imageHeight - sh) / 2, sw: imageWidth, sh };
+}
+
+function drawCellImage(offset) {
+  if (!background.image) return;
+  const d = displacement(offset.i, offset.j);
+  const crop = imageSourceCrop();
+  if (!crop) return;
+
+  ctx.save();
+  clipToCell(offset);
+  ctx.globalAlpha = 0.76;
+  ctx.translate(d.x, d.y);
+  ctx.transform(surface.v1.x, surface.v1.y, surface.v2.x, surface.v2.y, 0, 0);
+  ctx.drawImage(background.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = "rgba(255, 253, 248, 0.12)";
+  ctx.fillRect(0, 0, 1, 1);
+  ctx.restore();
+}
+
+function collectImageOffsets(iStart, iEnd, jStart, jEnd) {
+  const width = Math.max(0, iEnd - iStart + 1);
+  const height = Math.max(0, jEnd - jStart + 1);
+  if (width * height > MAX_CELL_IMAGE_COPIES) return null;
+  return collectOffsets(iStart, iEnd, jStart, jEnd);
+}
+
+function getCellImageOffsets() {
+  if (!surface.repeatV1 && !surface.repeatV2) return [{ i: 0, j: 0 }];
+
+  if (surface.repeatV1 && surface.repeatV2) {
+    const basisRange = getViewportBasisRange();
+    if (!basisRange) return [{ i: 0, j: 0 }];
+    return collectImageOffsets(basisRange.u.min, basisRange.u.max, basisRange.v.min, basisRange.v.max);
+  }
+
+  if (surface.repeatV1) {
+    const range = getViewportProjectionRange(surface.v1);
+    return collectImageOffsets(range.min, range.max, 0, 0);
+  }
+
+  const range = getViewportProjectionRange(surface.v2);
+  return collectImageOffsets(0, 0, range.min, range.max);
+}
+
+function drawImageFallbackForTinyCells() {
+  ctx.save();
+  ctx.globalAlpha = 0.18;
+  const corners = viewportWorldCorners();
+  const minX = Math.min(...corners.map(point => point.x));
+  const maxX = Math.max(...corners.map(point => point.x));
+  const minY = Math.min(...corners.map(point => point.y));
+  const maxY = Math.max(...corners.map(point => point.y));
+  ctx.drawImage(background.image, minX, minY, maxX - minX, maxY - minY);
+  ctx.restore();
+}
+
+function drawCellImages() {
+  if (!background.image) return;
+  const offsets = getCellImageOffsets();
+
+  if (!offsets) {
+    drawImageFallbackForTinyCells();
+    return;
+  }
+
+  for (const offset of offsets) {
+    drawCellImage(offset);
   }
 }
 
@@ -636,6 +724,8 @@ function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
 }
 
 function drawWorld(preview = null) {
+  drawCellImages();
+
   if (!hideGridInput.checked) {
     drawGrid();
   }
@@ -835,7 +925,7 @@ function splitObjectByEraser(object, point, radius) {
 }
 
 function eraserRadius() {
-  return Math.max(10 / view.zoom, (Number(sizeInput.value) || 4) / 2);
+  return Math.max(0.5, Number(sizeInput.value) || 4) / 2;
 }
 
 function localPointForHit(object, worldPoint, radius) {
@@ -1111,6 +1201,17 @@ function writeSurfaceToControls(value = surface) {
   repeatV2Input.checked = value.repeatV2;
 }
 
+function setImageFitMode(nextMode, showStatus = true) {
+  imageFitMode = nextMode === "stretch" ? "stretch" : "crop";
+  imageCropButton.classList.toggle("active", imageFitMode === "crop");
+  imageStretchButton.classList.toggle("active", imageFitMode === "stretch");
+  if (showStatus) {
+    setStatus(imageFitMode === "crop" ? "Image fit: crop." : "Image fit: stretch.");
+    scheduleAutosave();
+  }
+  requestRender();
+}
+
 function readSurfaceFromControls() {
   return {
     v1: {
@@ -1153,7 +1254,7 @@ function clearForSurfaceChange() {
   updateHistoryButtons();
 }
 
-function applySurface(next, message = "Surface updated.") {
+function applySurface(next, message = "Surface updated.", confirmMessage = "Changing the surface clears the existing drawing so old strokes do not end up on the wrong torus/cylinder. Continue?") {
   const error = validateSurface(next);
 
   if (error) {
@@ -1169,9 +1270,7 @@ function applySurface(next, message = "Surface updated.") {
   }
 
   if (objects.length > 0) {
-    const proceed = window.confirm(
-      "Changing the surface clears the existing drawing so old strokes do not end up on the wrong torus/cylinder. Continue?"
-    );
+    const proceed = window.confirm(confirmMessage);
 
     if (!proceed) {
       writeSurfaceToControls(surface);
@@ -1197,15 +1296,47 @@ function applySurfaceFromControls() {
 
 function resetSurfaceFields() {
   const previousHideGrid = hideGridInput.checked;
+  const previousImageFitMode = imageFitMode;
   const applied = applySurface(cloneSurface(DEFAULT_SURFACE), "Surface reset.");
 
   if (applied) {
     hideGridInput.checked = DEFAULT_HIDE_GRID;
+    setImageFitMode(DEFAULT_IMAGE_FIT_MODE, false);
     requestRender();
     scheduleAutosave();
   } else {
     hideGridInput.checked = previousHideGrid;
+    setImageFitMode(previousImageFitMode, false);
   }
+}
+
+function surfaceForImage() {
+  if (!background.image) return null;
+  const imageWidth = background.naturalWidth || background.image.naturalWidth || 1;
+  const imageHeight = background.naturalHeight || background.image.naturalHeight || 1;
+  const scaleFactor = FIT_IMAGE_LONG_SIDE / Math.max(imageWidth, imageHeight);
+  const width = Math.max(80, Math.round(imageWidth * scaleFactor));
+  const height = Math.max(80, Math.round(imageHeight * scaleFactor));
+  return {
+    v1: { x: width, y: 0 },
+    v2: { x: 0, y: height },
+    repeatV1: true,
+    repeatV2: true
+  };
+}
+
+function fitSurfaceToImage() {
+  const next = surfaceForImage();
+  if (!next) {
+    setStatus("Upload an image first.");
+    return;
+  }
+
+  applySurface(
+    next,
+    "Surface fitted to image.",
+    "Fitting the surface to the image will clear the existing drawing because the surface dimensions are changing. Continue?"
+  );
 }
 
 function setBackgroundFromDataUrl(dataUrl) {
@@ -1241,7 +1372,7 @@ function loadBackground(file) {
   const reader = new FileReader();
   reader.onload = async () => {
     await setBackgroundFromDataUrl(reader.result);
-    setStatus("Background added.");
+    setStatus("Image added to cells. Use Surface → Fit surface to image if needed.");
     scheduleAutosave();
     requestRender();
   };
@@ -1256,16 +1387,17 @@ function removeBackground(skipStatus = false) {
     naturalHeight: 1
   };
   backgroundInput.value = "";
-  if (!skipStatus) setStatus("Background removed.");
+  if (!skipStatus) setStatus("Image removed.");
   scheduleAutosave();
   requestRender();
 }
 
 function serializeProject() {
   return {
-    version: 3,
+    version: 4,
     surface: cloneSurface(surface),
     hideGrid: hideGridInput.checked,
+    imageFitMode,
     view: { ...view },
     objects: cloneObjects(objects),
     nextObjectId,
@@ -1288,6 +1420,7 @@ async function restoreProject(data, silent = false) {
   colorInput.value = data.color || "#111111";
   sizeInput.value = data.size || "4";
   hideGridInput.checked = Boolean(data.hideGrid);
+  setImageFitMode(data.imageFitMode || DEFAULT_IMAGE_FIT_MODE, false);
   undoStack = [];
   redoStack = [];
   updateHistoryButtons();
@@ -1421,6 +1554,9 @@ function handleKeyDown(event) {
     chooseTool("line");
   } else if (key === "4" || key === "e") {
     event.preventDefault();
+    if (key === "e" && event.shiftKey) {
+      setEraserMode(eraserMode === "object" ? "rub" : "object");
+    }
     chooseTool("erase");
   } else if (key === "3" || key === "v") {
     event.preventDefault();
@@ -1476,8 +1612,14 @@ penButton.addEventListener("click", () => chooseTool("pen"));
 lineButton.addEventListener("click", () => chooseTool("line"));
 eraseButton.addEventListener("click", () => chooseTool("erase"));
 panButton.addEventListener("click", () => chooseTool("pan"));
-eraseObjectButton.addEventListener("click", () => setEraserMode("object"));
-eraseRubButton.addEventListener("click", () => setEraserMode("rub"));
+eraseObjectButton.addEventListener("click", () => {
+  setEraserMode("object");
+  chooseTool("erase");
+});
+eraseRubButton.addEventListener("click", () => {
+  setEraserMode("rub");
+  chooseTool("erase");
+});
 undoButton.addEventListener("click", undo);
 redoButton.addEventListener("click", redo);
 clearButton.addEventListener("click", clearDrawing);
@@ -1501,6 +1643,9 @@ helpButton.addEventListener("click", () => {
 resetGeometryButton.addEventListener("click", resetSurfaceFields);
 centerViewButton.addEventListener("click", centerView);
 fitCellButton.addEventListener("click", fitCellToView);
+fitSurfaceToImageButton.addEventListener("click", fitSurfaceToImage);
+imageCropButton.addEventListener("click", () => setImageFitMode("crop"));
+imageStretchButton.addEventListener("click", () => setImageFitMode("stretch"));
 updateSurfaceButton.addEventListener("click", applySurfaceFromControls);
 backgroundInput.addEventListener("change", event => loadBackground(event.target.files[0]));
 removeBackgroundButton.addEventListener("click", () => removeBackground());
@@ -1524,6 +1669,7 @@ window.addEventListener("resize", resizeCanvas);
 
 writeSurfaceToControls();
 hideGridInput.checked = DEFAULT_HIDE_GRID;
+setImageFitMode(DEFAULT_IMAGE_FIT_MODE, false);
 syncZoomSlider();
 updateHistoryButtons();
 setDefaultStatus();
