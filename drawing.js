@@ -21,6 +21,10 @@ const repeatV2Input = document.getElementById("repeatV2Input");
 const hideGridInput = document.getElementById("hideGridInput");
 const geometryButton = document.getElementById("geometryButton");
 const geometryPanel = document.getElementById("geometryPanel");
+const imageButton = document.getElementById("imageButton");
+const imagePanel = document.getElementById("imagePanel");
+const imageCloseButton = document.getElementById("imageCloseButton");
+const imageSummary = document.getElementById("imageSummary");
 const backgroundInput = document.getElementById("backgroundInput");
 const removeBackgroundButton = document.getElementById("removeBackgroundButton");
 const resetGeometryButton = document.getElementById("resetGeometryButton");
@@ -30,6 +34,14 @@ const fitCellButton = document.getElementById("fitCellButton");
 const fitSurfaceToImageButton = document.getElementById("fitSurfaceToImageButton");
 const imageCropButton = document.getElementById("imageCropButton");
 const imageStretchButton = document.getElementById("imageStretchButton");
+const imageManualButton = document.getElementById("imageManualButton");
+const imageOpacityInput = document.getElementById("imageOpacityInput");
+const imageOpacityValue = document.getElementById("imageOpacityValue");
+const editImagePlacementButton = document.getElementById("editImagePlacementButton");
+const placementPanel = document.getElementById("placementPanel");
+const imageKeepAspectInput = document.getElementById("imageKeepAspectInput");
+const cancelPlacementButton = document.getElementById("cancelPlacementButton");
+const donePlacementButton = document.getElementById("donePlacementButton");
 const exportButton = document.getElementById("exportButton");
 const saveProjectButton = document.getElementById("saveProjectButton");
 const projectInput = document.getElementById("projectInput");
@@ -39,6 +51,12 @@ const zoomOutButton = document.getElementById("zoomOutButton");
 const status = document.getElementById("status");
 const helpButton = document.getElementById("helpButton");
 const helpPanel = document.getElementById("helpPanel");
+const shapeButton = document.getElementById("shapeButton");
+const shapePanel = document.getElementById("shapePanel");
+const shapeCloseButton = document.getElementById("shapeCloseButton");
+const shapeCanvas = document.getElementById("shapeCanvas");
+const shapeCtx = shapeCanvas.getContext("2d");
+const shapeSummary = document.getElementById("shapeSummary");
 const angleHint = document.getElementById("angleHint");
 
 const a1Input = document.getElementById("a1Input");
@@ -51,10 +69,14 @@ const MAX_ZOOM = 7.5;
 const REPEAT_PADDING = 4;
 const DET_MIN = 0.001;
 const VECTOR_REPEAT_MIN_LENGTH = 1;
-const STORAGE_KEY = "torus-drawing-app.autosave.v3";
+const STORAGE_KEY = "torus-drawing-app.autosave.v4";
 const SNAP_STEP_RADIANS = Math.PI / 12;
 const DEFAULT_HIDE_GRID = false;
+const DEFAULT_DRAW_SIZE = 4;
+const DEFAULT_ERASER_SIZE = 10;
 const DEFAULT_IMAGE_FIT_MODE = "crop";
+const DEFAULT_IMAGE_OPACITY = 0.76;
+const DEFAULT_IMAGE_PLACEMENT = { x: 0, y: 0, width: 1, height: 1, keepAspect: true };
 const FIT_IMAGE_LONG_SIDE = 650;
 const MAX_CELL_IMAGE_COPIES = 2200;
 const DEFAULT_SURFACE = {
@@ -85,6 +107,8 @@ let spaceIsDown = false;
 let eraserMode = "object";
 let eraseBeforeObjects = null;
 let eraseChanged = false;
+let drawingSize = DEFAULT_DRAW_SIZE;
+let eraserSize = DEFAULT_ERASER_SIZE;
 
 let view = {
   x: 300,
@@ -94,6 +118,16 @@ let view = {
 
 let surface = cloneSurface(DEFAULT_SURFACE);
 let imageFitMode = DEFAULT_IMAGE_FIT_MODE;
+let imageOpacity = DEFAULT_IMAGE_OPACITY;
+let imagePlacement = { ...DEFAULT_IMAGE_PLACEMENT };
+let placementEditor = {
+  active: false,
+  draft: null,
+  before: null,
+  action: null,
+  startBasis: null,
+  startPlacement: null
+};
 
 let background = {
   image: null,
@@ -108,6 +142,8 @@ let previewQueued = false;
 let statusTimer = null;
 let autosaveTimer = null;
 let loadedAutosave = false;
+let shapeView = { yaw: -0.72, pitch: 0.45, zoom: 1.0 };
+let shapeDrag = null;
 
 function cloneSurface(value) {
   return {
@@ -135,6 +171,7 @@ function requestRender() {
   requestAnimationFrame(() => {
     renderQueued = false;
     redraw();
+    if (shapePanel.classList.contains("open")) renderShapePreview();
   });
 }
 
@@ -190,10 +227,27 @@ function worldToScreen(point) {
   };
 }
 
+function normalizedSize(value, fallback = 1) {
+  return clamp(Number(value) || fallback, 1, 300);
+}
+
+function storeVisibleSize() {
+  const value = normalizedSize(sizeInput.value, tool === "erase" ? eraserSize : drawingSize);
+  if (tool === "erase") {
+    eraserSize = value;
+  } else {
+    drawingSize = value;
+  }
+}
+
+function syncSizeInputForTool() {
+  sizeInput.value = String(Math.round((tool === "erase" ? eraserSize : drawingSize) * 10) / 10);
+}
+
 function currentStyle() {
   return {
     color: colorInput.value,
-    size: Math.max(1, Number(sizeInput.value) || 1)
+    size: drawingSize
   };
 }
 
@@ -214,6 +268,7 @@ function updateHistoryButtons() {
 }
 
 function chooseTool(newTool) {
+  storeVisibleSize();
   tool = newTool;
   penButton.classList.toggle("active", tool === "pen");
   lineButton.classList.toggle("active", tool === "line");
@@ -221,6 +276,7 @@ function chooseTool(newTool) {
   panButton.classList.toggle("active", tool === "pan");
   eraserOptions.hidden = tool !== "erase";
   canvas.classList.toggle("panning", tool === "pan" || spaceIsDown);
+  syncSizeInputForTool();
   hideAngleHint();
 }
 
@@ -489,7 +545,7 @@ function imageSourceCrop() {
   const cellHeight = length(surface.v2);
   if (cellWidth < VECTOR_REPEAT_MIN_LENGTH || cellHeight < VECTOR_REPEAT_MIN_LENGTH) return null;
 
-  if (imageFitMode === "stretch") {
+  if (imageFitMode === "stretch" || imageFitMode === "manual") {
     return { sx: 0, sy: 0, sw: imageWidth, sh: imageHeight };
   }
 
@@ -513,13 +569,80 @@ function drawCellImage(offset) {
 
   ctx.save();
   clipToCell(offset);
-  ctx.globalAlpha = 0.76;
+  ctx.globalAlpha = imageOpacity;
   ctx.translate(d.x, d.y);
   ctx.transform(surface.v1.x, surface.v1.y, surface.v2.x, surface.v2.y, 0, 0);
-  ctx.drawImage(background.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
+
+  if (imageFitMode === "manual") {
+    ctx.drawImage(
+      background.image,
+      crop.sx,
+      crop.sy,
+      crop.sw,
+      crop.sh,
+      imagePlacement.x,
+      imagePlacement.y,
+      imagePlacement.width,
+      imagePlacement.height
+    );
+  } else {
+    ctx.drawImage(background.image, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, 1, 1);
+  }
+
   ctx.globalAlpha = 1;
-  ctx.fillStyle = "rgba(255, 253, 248, 0.12)";
+  ctx.fillStyle = "rgba(255, 253, 248, 0.09)";
   ctx.fillRect(0, 0, 1, 1);
+  ctx.restore();
+}
+
+function basisToWorld(point) {
+  return add(scale(surface.v1, point.u), scale(surface.v2, point.v));
+}
+
+function drawPlacementOverlay() {
+  if (!placementEditor.active || !background.image) return;
+  const p = placementEditor.draft || imagePlacement;
+  const corners = [
+    basisToWorld({ u: 0, v: 0 }),
+    basisToWorld({ u: 1, v: 0 }),
+    basisToWorld({ u: 1, v: 1 }),
+    basisToWorld({ u: 0, v: 1 })
+  ];
+  const rect = [
+    basisToWorld({ u: p.x, v: p.y }),
+    basisToWorld({ u: p.x + p.width, v: p.y }),
+    basisToWorld({ u: p.x + p.width, v: p.y + p.height }),
+    basisToWorld({ u: p.x, v: p.y + p.height })
+  ];
+
+  ctx.save();
+  ctx.lineWidth = Math.max(2 / view.zoom, 0.9);
+  ctx.strokeStyle = "rgba(31,31,31,0.72)";
+  ctx.setLineDash([8 / view.zoom, 6 / view.zoom]);
+  ctx.beginPath();
+  ctx.moveTo(corners[0].x, corners[0].y);
+  ctx.lineTo(corners[1].x, corners[1].y);
+  ctx.lineTo(corners[2].x, corners[2].y);
+  ctx.lineTo(corners[3].x, corners[3].y);
+  ctx.closePath();
+  ctx.stroke();
+
+  ctx.setLineDash([]);
+  ctx.strokeStyle = "rgba(31,31,31,0.92)";
+  ctx.beginPath();
+  ctx.moveTo(rect[0].x, rect[0].y);
+  ctx.lineTo(rect[1].x, rect[1].y);
+  ctx.lineTo(rect[2].x, rect[2].y);
+  ctx.lineTo(rect[3].x, rect[3].y);
+  ctx.closePath();
+  ctx.stroke();
+
+  const handle = rect[2];
+  const r = Math.max(7 / view.zoom, 3.5);
+  ctx.fillStyle = "rgba(31,31,31,0.92)";
+  ctx.beginPath();
+  ctx.arc(handle.x, handle.y, r, 0, Math.PI * 2);
+  ctx.fill();
   ctx.restore();
 }
 
@@ -741,6 +864,8 @@ function drawWorld(preview = null) {
       drawObject(preview, offset, true);
     }
   }
+
+  drawPlacementOverlay();
 }
 
 function redraw(preview = null) {
@@ -925,7 +1050,7 @@ function splitObjectByEraser(object, point, radius) {
 }
 
 function eraserRadius() {
-  return Math.max(0.5, Number(sizeInput.value) || 4) / 2;
+  return Math.max(0.5, eraserSize) / 2;
 }
 
 function localPointForHit(object, worldPoint, radius) {
@@ -981,9 +1106,130 @@ function commitEraseIfNeeded() {
   scheduleAutosave();
 }
 
+function placementPointFromEvent(event) {
+  const basis = worldToBasis(screenToWorld(pointFromEvent(event)));
+  if (!basis) return null;
+  return { u: basis.u, v: basis.v };
+}
+
+function placementHandleDistance(point, placement) {
+  const handle = { u: placement.x + placement.width, v: placement.y + placement.height };
+  return Math.hypot(point.u - handle.u, point.v - handle.v);
+}
+
+function placementContains(point, placement) {
+  const minU = Math.min(placement.x, placement.x + placement.width);
+  const maxU = Math.max(placement.x, placement.x + placement.width);
+  const minV = Math.min(placement.y, placement.y + placement.height);
+  const maxV = Math.max(placement.y, placement.y + placement.height);
+  return point.u >= minU && point.u <= maxU && point.v >= minV && point.v <= maxV;
+}
+
+function startImagePlacement() {
+  if (!background.image) {
+    setStatus("Upload an image first.");
+    return;
+  }
+  setImageFitMode("manual", false);
+  placementEditor.active = true;
+  placementEditor.draft = { ...imagePlacement };
+  placementEditor.before = { ...imagePlacement };
+  placementEditor.action = null;
+  placementPanel.classList.add("open");
+  imagePanel.classList.add("open");
+  setStatus("Drag image to move it. Drag the corner dot to resize.", true);
+  requestRender();
+}
+
+function stopImagePlacement(commit) {
+  if (!placementEditor.active) return;
+  if (commit && placementEditor.draft) {
+    imagePlacement = { ...placementEditor.draft, keepAspect: imageKeepAspectInput.checked };
+    setImageFitMode("manual", false);
+    setStatus("Image placement updated.");
+    scheduleAutosave();
+  } else if (!commit && placementEditor.before) {
+    imagePlacement = { ...placementEditor.before };
+    setStatus("Image placement cancelled.");
+  }
+  placementEditor.active = false;
+  placementEditor.draft = null;
+  placementEditor.before = null;
+  placementEditor.action = null;
+  placementPanel.classList.remove("open");
+  setStatus(commit ? "Image placement updated." : "Image placement cancelled.");
+  updateImagePanelState();
+  requestRender();
+}
+
+function startPlacementDrag(event) {
+  const point = placementPointFromEvent(event);
+  if (!point || !placementEditor.active || !placementEditor.draft) return false;
+  const draft = placementEditor.draft;
+  const handleThreshold = 0.055;
+  if (placementHandleDistance(point, draft) < handleThreshold) {
+    placementEditor.action = "resize";
+  } else if (placementContains(point, draft)) {
+    placementEditor.action = "move";
+  } else {
+    placementEditor.action = "move";
+    draft.x = point.u - draft.width / 2;
+    draft.y = point.v - draft.height / 2;
+  }
+  placementEditor.startBasis = point;
+  placementEditor.startPlacement = { ...draft };
+  requestRender();
+  return true;
+}
+
+function continuePlacementDrag(event) {
+  if (!placementEditor.active || !placementEditor.action || !placementEditor.startBasis || !placementEditor.startPlacement) return false;
+  const point = placementPointFromEvent(event);
+  if (!point) return true;
+  const start = placementEditor.startBasis;
+  const before = placementEditor.startPlacement;
+  const draft = placementEditor.draft;
+  const du = point.u - start.u;
+  const dv = point.v - start.v;
+
+  if (placementEditor.action === "move") {
+    draft.x = before.x + du;
+    draft.y = before.y + dv;
+  } else {
+    let width = Math.max(0.04, before.width + du);
+    let height = Math.max(0.04, before.height + dv);
+    if (imageKeepAspectInput.checked) {
+      const aspect = Math.max(0.05, Math.abs(before.width / before.height));
+      const signW = width < 0 ? -1 : 1;
+      const signH = height < 0 ? -1 : 1;
+      if (Math.abs(du) > Math.abs(dv)) {
+        height = Math.abs(width) / aspect * signH;
+      } else {
+        width = Math.abs(height) * aspect * signW;
+      }
+    }
+    draft.width = width;
+    draft.height = height;
+  }
+  requestRender();
+  return true;
+}
+
+function finishPlacementDrag() {
+  if (!placementEditor.active) return false;
+  placementEditor.action = null;
+  placementEditor.startBasis = null;
+  placementEditor.startPlacement = null;
+  return true;
+}
+
 function startDrawing(event) {
   event.preventDefault();
   canvas.setPointerCapture(event.pointerId);
+
+  if (placementEditor.active && startPlacementDrag(event)) {
+    return;
+  }
 
   const screenPoint = pointFromEvent(event);
 
@@ -1016,6 +1262,12 @@ function startDrawing(event) {
 }
 
 function continueDrawing(event) {
+  if (placementEditor.active && placementEditor.action) {
+    event.preventDefault();
+    continuePlacementDrag(event);
+    return;
+  }
+
   const screenPoint = pointFromEvent(event);
 
   if (isPanning && panStart && viewStart) {
@@ -1072,6 +1324,12 @@ function requestRenderWithPreview(preview) {
 }
 
 function stopDrawing(event) {
+  if (placementEditor.active && placementEditor.action) {
+    event.preventDefault();
+    finishPlacementDrag();
+    return;
+  }
+
   if (isPanning) {
     event.preventDefault();
     isPanning = false;
@@ -1202,15 +1460,46 @@ function writeSurfaceToControls(value = surface) {
 }
 
 function setImageFitMode(nextMode, showStatus = true) {
-  imageFitMode = nextMode === "stretch" ? "stretch" : "crop";
+  imageFitMode = ["crop", "stretch", "manual"].includes(nextMode) ? nextMode : "crop";
   imageCropButton.classList.toggle("active", imageFitMode === "crop");
   imageStretchButton.classList.toggle("active", imageFitMode === "stretch");
+  imageManualButton.classList.toggle("active", imageFitMode === "manual");
+  updateImagePanelState();
   if (showStatus) {
-    setStatus(imageFitMode === "crop" ? "Image fit: crop." : "Image fit: stretch.");
+    setStatus(`Image fit: ${imageFitMode}.`);
     scheduleAutosave();
   }
   requestRender();
 }
+
+function updateImagePanelState() {
+  if (imageOpacityInput) imageOpacityInput.value = String(Math.round(imageOpacity * 100));
+  if (imageOpacityValue) imageOpacityValue.textContent = `${Math.round(imageOpacity * 100)}%`;
+  if (imageKeepAspectInput) imageKeepAspectInput.checked = Boolean(imagePlacement.keepAspect);
+  if (imageSummary) {
+    imageSummary.textContent = background.image
+      ? `${background.naturalWidth}×${background.naturalHeight} · ${imageFitMode} · ${Math.round(imageOpacity * 100)}%`
+      : "No image added";
+  }
+  if (editImagePlacementButton) editImagePlacementButton.disabled = !background.image;
+  if (removeBackgroundButton) removeBackgroundButton.disabled = !background.image;
+  if (fitSurfaceToImageButton) fitSurfaceToImageButton.disabled = !background.image;
+}
+
+function setImageOpacityFromControl(showStatus = true) {
+  imageOpacity = clamp((Number(imageOpacityInput.value) || 76) / 100, 0.15, 1);
+  updateImagePanelState();
+  if (showStatus) {
+    setStatus(`Image opacity: ${Math.round(imageOpacity * 100)}%.`);
+    scheduleAutosave();
+  }
+  requestRender();
+}
+
+function defaultManualPlacement() {
+  return { ...DEFAULT_IMAGE_PLACEMENT };
+}
+
 
 function readSurfaceFromControls() {
   return {
@@ -1283,8 +1572,9 @@ function applySurface(next, message = "Surface updated.", confirmMessage = "Chan
 
   surface = cloneSurface(next);
   writeSurfaceToControls(surface);
+  resetShapeViewForSurface();
   centerView();
-  setStatus(message);
+  setStatus(imageFitMode === "manual" && background.image ? `${message} Manual image placement may need adjustment.` : message);
   scheduleAutosave();
   requestRender();
   return true;
@@ -1296,17 +1586,14 @@ function applySurfaceFromControls() {
 
 function resetSurfaceFields() {
   const previousHideGrid = hideGridInput.checked;
-  const previousImageFitMode = imageFitMode;
   const applied = applySurface(cloneSurface(DEFAULT_SURFACE), "Surface reset.");
 
   if (applied) {
     hideGridInput.checked = DEFAULT_HIDE_GRID;
-    setImageFitMode(DEFAULT_IMAGE_FIT_MODE, false);
     requestRender();
     scheduleAutosave();
   } else {
     hideGridInput.checked = previousHideGrid;
-    setImageFitMode(previousImageFitMode, false);
   }
 }
 
@@ -1372,7 +1659,10 @@ function loadBackground(file) {
   const reader = new FileReader();
   reader.onload = async () => {
     await setBackgroundFromDataUrl(reader.result);
-    setStatus("Image added to cells. Use Surface → Fit surface to image if needed.");
+    imagePlacement = defaultManualPlacement();
+    updateImagePanelState();
+    imagePanel.classList.add("open");
+    setStatus("Image added to cells.");
     scheduleAutosave();
     requestRender();
   };
@@ -1387,6 +1677,8 @@ function removeBackground(skipStatus = false) {
     naturalHeight: 1
   };
   backgroundInput.value = "";
+  stopImagePlacement(false);
+  updateImagePanelState();
   if (!skipStatus) setStatus("Image removed.");
   scheduleAutosave();
   requestRender();
@@ -1394,15 +1686,19 @@ function removeBackground(skipStatus = false) {
 
 function serializeProject() {
   return {
-    version: 4,
+    version: 6,
     surface: cloneSurface(surface),
     hideGrid: hideGridInput.checked,
     imageFitMode,
+    imageOpacity,
+    imagePlacement: { ...imagePlacement },
     view: { ...view },
     objects: cloneObjects(objects),
     nextObjectId,
     color: colorInput.value,
-    size: sizeInput.value,
+    size: String(drawingSize),
+    drawingSize,
+    eraserSize,
     backgroundDataUrl: background.dataUrl || null
   };
 }
@@ -1418,15 +1714,25 @@ async function restoreProject(data, silent = false) {
   nextObjectId = Number(data.nextObjectId) || (objects.reduce((maxId, object) => Math.max(maxId, object.id || 0), 0) + 1);
   view = data.view && Number.isFinite(data.view.zoom) ? { ...data.view } : { x: 300, y: 210, zoom: 0.9 };
   colorInput.value = data.color || "#111111";
-  sizeInput.value = data.size || "4";
+  drawingSize = normalizedSize(data.drawingSize ?? data.size, DEFAULT_DRAW_SIZE);
+  eraserSize = normalizedSize(data.eraserSize, DEFAULT_ERASER_SIZE);
+  if ((Number(data.version) || 0) < 5 && Math.round(eraserSize) === 36) {
+    eraserSize = DEFAULT_ERASER_SIZE;
+  }
+  syncSizeInputForTool();
   hideGridInput.checked = Boolean(data.hideGrid);
+  imageOpacity = clamp(Number(data.imageOpacity ?? DEFAULT_IMAGE_OPACITY), 0.15, 1);
+  imagePlacement = { ...DEFAULT_IMAGE_PLACEMENT, ...(data.imagePlacement || {}) };
   setImageFitMode(data.imageFitMode || DEFAULT_IMAGE_FIT_MODE, false);
+  updateImagePanelState();
   undoStack = [];
   redoStack = [];
   updateHistoryButtons();
   writeSurfaceToControls(surface);
   syncZoomSlider();
   await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
+  resetShapeViewForSurface();
+  updateImagePanelState();
   requestRender();
   if (!silent) setStatus("Project opened.");
 }
@@ -1498,6 +1804,535 @@ function exportPNG() {
     URL.revokeObjectURL(url);
     setStatus("PNG exported.");
   }, "image/png");
+}
+
+
+
+function shapeTypeLabel() {
+  if (surface.repeatV1 && surface.repeatV2) return "Torus";
+  if (surface.repeatV1 || surface.repeatV2) return "Cylinder";
+  return "Plane";
+}
+
+function resizeShapeCanvas() {
+  const ratio = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+  const rect = shapeCanvas.getBoundingClientRect();
+  const width = Math.max(280, Math.round(rect.width * ratio));
+  const height = Math.max(220, Math.round(rect.height * ratio));
+  if (shapeCanvas.width !== width || shapeCanvas.height !== height) {
+    shapeCanvas.width = width;
+    shapeCanvas.height = height;
+  }
+}
+
+function surfaceAngleRadians() {
+  return Math.acos(clamp(dot(surface.v1, surface.v2) / Math.max(1, length(surface.v1) * length(surface.v2)), -1, 1));
+}
+
+function perpendicularLength(vector, againstVector) {
+  const againstLength = Math.max(1, length(againstVector));
+  const unit = scale(againstVector, 1 / againstLength);
+  const projection = dot(vector, unit);
+  const perpendicularSquared = Math.max(0, dot(vector, vector) - projection * projection);
+  return Math.sqrt(perpendicularSquared);
+}
+
+function signedSkewAlong(vector, againstVector) {
+  const denominator = Math.max(1, dot(againstVector, againstVector));
+  return clamp(dot(vector, againstVector) / denominator, -1.75, 1.75);
+}
+
+function wrapUnit(value) {
+  return ((value % 1) + 1) % 1;
+}
+
+function rotated3D(point) {
+  const cy = Math.cos(shapeView.yaw);
+  const sy = Math.sin(shapeView.yaw);
+  const cp = Math.cos(shapeView.pitch);
+  const sp = Math.sin(shapeView.pitch);
+  const x1 = point.x * cy + point.z * sy;
+  const z1 = -point.x * sy + point.z * cy;
+  const y1 = point.y * cp - z1 * sp;
+  const z2 = point.y * sp + z1 * cp;
+  return { x: x1, y: y1, z: z2 };
+}
+
+function project3D(point, size) {
+  const rotated = rotated3D(point);
+  const distance = 7.2;
+  const denominator = Math.max(1.05, distance - rotated.z);
+  const perspective = distance / denominator;
+  return {
+    x: size.width / 2 + rotated.x * perspective * size.scale * shapeView.zoom,
+    y: size.height / 2 - rotated.y * perspective * size.scale * shapeView.zoom,
+    z: rotated.z
+  };
+}
+
+function normalFromPoints(a, b, c) {
+  const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+  const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+  return {
+    x: ab.y * ac.z - ab.z * ac.y,
+    y: ab.z * ac.x - ab.x * ac.z,
+    z: ab.x * ac.y - ab.y * ac.x
+  };
+}
+
+function lightForNormal(normal, extra = 0) {
+  const light = { x: -0.34, y: 0.74, z: 0.86 };
+  const lightLen = Math.hypot(light.x, light.y, light.z);
+  const normalLen = Math.max(0.001, Math.hypot(normal.x, normal.y, normal.z));
+  const intensity = Math.max(0, (normal.x * light.x + normal.y * light.y + normal.z * light.z) / (normalLen * lightLen));
+  const shade = clamp(190 + intensity * 54 + extra, 176, 246);
+  return `rgb(${Math.round(shade)}, ${Math.round(shade)}, ${Math.round(clamp(shade + 8, 185, 255))})`;
+}
+
+function makeShapeQuad(points, fill = null) {
+  const rotated = points.map(rotated3D);
+  const depth = rotated.reduce((sum, point) => sum + point.z, 0) / rotated.length;
+  const normal = normalFromPoints(points[0], points[1], points[2]);
+  return {
+    type: "quad",
+    points,
+    fill: fill || lightForNormal(normal),
+    depth
+  };
+}
+
+function makeShapeLine(points, color, width, alpha = 1, depthBias = 0) {
+  const rotated = points.map(rotated3D);
+  const depth = rotated.reduce((sum, point) => sum + point.z, 0) / rotated.length + depthBias;
+  return { type: "line", points, color, width, alpha, depth };
+}
+
+function renderShapeQuad(item, size) {
+  const projected = item.points.map(point => project3D(point, size));
+  shapeCtx.beginPath();
+  shapeCtx.moveTo(projected[0].x, projected[0].y);
+  for (let i = 1; i < projected.length; i++) shapeCtx.lineTo(projected[i].x, projected[i].y);
+  shapeCtx.closePath();
+  shapeCtx.fillStyle = item.fill;
+  shapeCtx.fill();
+}
+
+function renderShapeLine(item, size) {
+  const projected = item.points.map(point => project3D(point, size));
+  if (projected.length < 2) return;
+  shapeCtx.save();
+  shapeCtx.globalAlpha = item.alpha;
+  shapeCtx.strokeStyle = item.color;
+  shapeCtx.lineWidth = item.width;
+  shapeCtx.lineCap = "round";
+  shapeCtx.lineJoin = "round";
+  shapeCtx.beginPath();
+  shapeCtx.moveTo(projected[0].x, projected[0].y);
+  for (let i = 1; i < projected.length; i++) shapeCtx.lineTo(projected[i].x, projected[i].y);
+  shapeCtx.stroke();
+  shapeCtx.restore();
+}
+
+function shapeModelParameters() {
+  const l1 = Math.max(1, length(surface.v1));
+  const l2 = Math.max(1, length(surface.v2));
+  const angle = surfaceAngleRadians();
+  const angleFactor = clamp(Math.sin(angle), 0.12, 1);
+  const type = shapeTypeLabel();
+  const skew12 = signedSkewAlong(surface.v2, surface.v1);
+  const skew21 = signedSkewAlong(surface.v1, surface.v2);
+
+  if (type === "Torus") {
+    let R = l1 / (Math.PI * 2);
+    let r = perpendicularLength(surface.v2, surface.v1) / (Math.PI * 2);
+    if (!Number.isFinite(r) || r < 1) r = l2 * angleFactor / (Math.PI * 2);
+    r = clamp(r, R * 0.11, R * 0.82);
+    const normalizer = 1.72 / Math.max(1, R + r);
+    return {
+      type,
+      l1,
+      l2,
+      angle,
+      angleFactor,
+      skew: skew12,
+      twist: clamp(skew12, -1.35, 1.35) * 0.22,
+      R: R * normalizer,
+      r: r * normalizer,
+      planeScale: 1
+    };
+  }
+
+  if (type === "Cylinder") {
+    const repeatIsV1 = surface.repeatV1;
+    const repeatVector = repeatIsV1 ? surface.v1 : surface.v2;
+    const openVector = repeatIsV1 ? surface.v2 : surface.v1;
+    const repeatLength = Math.max(1, length(repeatVector));
+    const openLength = Math.max(1, length(openVector));
+    const perpendicularOpen = Math.max(openLength * 0.22, perpendicularLength(openVector, repeatVector));
+    const skew = signedSkewAlong(openVector, repeatVector);
+    let radius = repeatLength / (Math.PI * 2);
+    let height = perpendicularOpen;
+    const normalizer = 2.75 / Math.max(1, height, radius * 2.2);
+    return {
+      type,
+      l1,
+      l2,
+      repeatIsV1,
+      repeatVector,
+      openVector,
+      repeatLength,
+      openLength,
+      angle,
+      angleFactor,
+      skew,
+      radius: radius * normalizer,
+      height: height * normalizer,
+      lean: clamp(skew * 0.34, -0.85, 0.85)
+    };
+  }
+
+  const points2D = [
+    { x: 0, y: 0 },
+    surface.v1,
+    add(surface.v1, surface.v2),
+    surface.v2
+  ];
+  const center = scale(add(surface.v1, surface.v2), 0.5);
+  const maxDistance = Math.max(1, ...points2D.map(point => Math.hypot(point.x - center.x, point.y - center.y)));
+  return {
+    type,
+    l1,
+    l2,
+    angle,
+    angleFactor,
+    center,
+    planeScale: 1.76 / maxDistance,
+    skew: Math.abs(skew12) > Math.abs(skew21) ? skew12 : skew21
+  };
+}
+
+function torusShapePoint(u, v, params) {
+  const vWrapped = wrapUnit(v);
+  // Periodic twist makes skewed/parallelogram domains read as a slanted
+  // parameterization while keeping the torus closed and visually clean.
+  const uTwist = u + params.twist * Math.sin(Math.PI * 2 * vWrapped);
+  const theta = Math.PI * 2 * wrapUnit(uTwist);
+  const phi = Math.PI * 2 * vWrapped;
+  const squash = 0.82 + 0.18 * params.angleFactor;
+  return {
+    x: (params.R + params.r * Math.cos(phi)) * Math.cos(theta),
+    y: params.r * Math.sin(phi) * squash,
+    z: (params.R + params.r * Math.cos(phi)) * Math.sin(theta)
+  };
+}
+
+function cylinderShapePoint(u, v, params) {
+  const repeatCoord = params.repeatIsV1 ? u : v;
+  const openCoord = params.repeatIsV1 ? v : u;
+  const theta = Math.PI * 2 * wrapUnit(repeatCoord + params.skew * openCoord);
+  const y = -params.height / 2 + openCoord * params.height;
+  const x = params.radius * Math.cos(theta) + params.lean * y;
+  const z = params.radius * Math.sin(theta);
+  if (params.repeatIsV1) return { x, y, z };
+  // Make v2-wrapped cylinders visibly different without changing the buttons.
+  return { x: y, y: x * 0.98, z };
+}
+
+function planeShapePoint(u, v, params) {
+  const p = add(scale(surface.v1, u), scale(surface.v2, v));
+  return {
+    x: (p.x - params.center.x) * params.planeScale,
+    y: -(p.y - params.center.y) * params.planeScale,
+    z: 0
+  };
+}
+
+function shapePointFromBasis(u, v, params) {
+  if (params.type === "Torus") return torusShapePoint(u, v, params);
+  if (params.type === "Cylinder") return cylinderShapePoint(u, v, params);
+  return planeShapePoint(u, v, params);
+}
+
+function addShapeSurface(items, params) {
+  if (params.type === "Torus") {
+    const uSteps = 96;
+    const vSteps = 40;
+    for (let i = 0; i < uSteps; i++) {
+      const u0 = i / uSteps;
+      const u1 = (i + 1) / uSteps;
+      for (let j = 0; j < vSteps; j++) {
+        const v0 = j / vSteps;
+        const v1 = (j + 1) / vSteps;
+        const pts = [
+          shapePointFromBasis(u0, v0, params),
+          shapePointFromBasis(u1, v0, params),
+          shapePointFromBasis(u1, v1, params),
+          shapePointFromBasis(u0, v1, params)
+        ];
+        items.push(makeShapeQuad(pts));
+      }
+    }
+    return;
+  }
+
+  if (params.type === "Cylinder") {
+    const wrapSteps = 96;
+    const heightSteps = 34;
+    for (let i = 0; i < wrapSteps; i++) {
+      const a0 = i / wrapSteps;
+      const a1 = (i + 1) / wrapSteps;
+      for (let j = 0; j < heightSteps; j++) {
+        const b0 = j / heightSteps;
+        const b1 = (j + 1) / heightSteps;
+        const pts = params.repeatIsV1
+          ? [
+              shapePointFromBasis(a0, b0, params),
+              shapePointFromBasis(a1, b0, params),
+              shapePointFromBasis(a1, b1, params),
+              shapePointFromBasis(a0, b1, params)
+            ]
+          : [
+              shapePointFromBasis(b0, a0, params),
+              shapePointFromBasis(b1, a0, params),
+              shapePointFromBasis(b1, a1, params),
+              shapePointFromBasis(b0, a1, params)
+            ];
+        items.push(makeShapeQuad(pts));
+      }
+    }
+    return;
+  }
+
+  const pts = [
+    shapePointFromBasis(0, 0, params),
+    shapePointFromBasis(1, 0, params),
+    shapePointFromBasis(1, 1, params),
+    shapePointFromBasis(0, 1, params)
+  ];
+  items.push(makeShapeQuad(pts, "rgb(235,235,242)"));
+}
+
+function addSegmentedParamLine(items, params, samples, color, width, alpha, depthBias = 0.018) {
+  for (let i = 1; i < samples.length; i++) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    const p1 = shapePointFromBasis(a.u, a.v, params);
+    const p2 = shapePointFromBasis(b.u, b.v, params);
+    items.push(makeShapeLine([p1, p2], color, width, alpha, depthBias));
+  }
+}
+
+function addShapeGrid(items, params) {
+  const majorColor = "rgba(28,28,28,0.58)";
+  const minorColor = "rgba(28,28,28,0.34)";
+  const majorWidth = Math.max(1.15, shapeCanvas.width / 520);
+  const minorWidth = Math.max(0.75, shapeCanvas.width / 820);
+  const samples = 96;
+  const divisions = params.type === "Plane" ? 8 : 12;
+
+  for (let k = 0; k <= divisions; k++) {
+    const t = k / divisions;
+    const isMajor = k === 0 || k === divisions || k === Math.floor(divisions / 2);
+    const color = isMajor ? majorColor : minorColor;
+    const width = isMajor ? majorWidth : minorWidth;
+    const alpha = isMajor ? 0.96 : 0.82;
+
+    const uLine = [];
+    const vLine = [];
+    for (let s = 0; s <= samples; s++) {
+      const q = s / samples;
+      uLine.push({ u: q, v: t });
+      vLine.push({ u: t, v: q });
+    }
+    addSegmentedParamLine(items, params, uLine, color, width, alpha, 0.025);
+    addSegmentedParamLine(items, params, vLine, color, width, alpha, 0.025);
+  }
+}
+
+function basisFromWorldPoint(point) {
+  const basis = worldToBasis(point);
+  if (!basis || !Number.isFinite(basis.u) || !Number.isFinite(basis.v)) return null;
+  return basis;
+}
+
+function lerpBasis(a, b, t) {
+  return {
+    u: a.u + (b.u - a.u) * t,
+    v: a.v + (b.v - a.v) * t
+  };
+}
+
+function splitBasisSegment(a, b, repeatU, repeatV) {
+  const cuts = [0, 1];
+  for (const key of ["u", "v"]) {
+    const repeats = key === "u" ? repeatU : repeatV;
+    if (!repeats) continue;
+    const start = a[key];
+    const end = b[key];
+    const low = Math.min(start, end);
+    const high = Math.max(start, end);
+    for (let boundary = Math.floor(low) + 1; boundary <= Math.floor(high); boundary++) {
+      if (boundary <= low || boundary >= high) continue;
+      const t = (boundary - start) / (end - start);
+      if (t > 0.0001 && t < 0.9999) cuts.push(t);
+    }
+  }
+  cuts.sort((x, y) => x - y);
+  const pieces = [];
+  for (let i = 1; i < cuts.length; i++) {
+    const t0 = cuts[i - 1];
+    const t1 = cuts[i];
+    if (t1 - t0 < 0.0001) continue;
+    pieces.push([lerpBasis(a, b, t0), lerpBasis(a, b, t1)]);
+  }
+  return pieces;
+}
+
+function basisVisibleOnShape(point, params) {
+  if (params.type === "Torus") return true;
+  if (params.type === "Cylinder") {
+    const openValue = params.repeatIsV1 ? point.v : point.u;
+    return openValue >= -0.002 && openValue <= 1.002;
+  }
+  return point.u >= -0.002 && point.u <= 1.002 && point.v >= -0.002 && point.v <= 1.002;
+}
+
+function drawingSegmentToShapeItems(items, params, a, b, object) {
+  const repeatU = params.type === "Torus" || (params.type === "Cylinder" && params.repeatIsV1);
+  const repeatV = params.type === "Torus" || (params.type === "Cylinder" && !params.repeatIsV1);
+  const pieces = splitBasisSegment(a, b, repeatU, repeatV);
+  const color = object.color || "#111111";
+  const width = clamp((object.size || 4) * (shapeCanvas.width / 1400), 1.15, 7.5);
+
+  for (const [start, end] of pieces) {
+    const midpoint = lerpBasis(start, end, 0.5);
+    if (!basisVisibleOnShape(midpoint, params)) continue;
+    const s = {
+      u: repeatU ? wrapUnit(start.u) : start.u,
+      v: repeatV ? wrapUnit(start.v) : start.v
+    };
+    const e = {
+      u: repeatU ? wrapUnit(end.u) : end.u,
+      v: repeatV ? wrapUnit(end.v) : end.v
+    };
+    const p1 = shapePointFromBasis(s.u, s.v, params);
+    const p2 = shapePointFromBasis(e.u, e.v, params);
+    items.push(makeShapeLine([p1, p2], color, width, 0.98, 0.055));
+  }
+}
+
+function addShapeDrawing(items, params) {
+  if (Math.abs(determinant()) < DET_MIN) return;
+  const maxSegments = 2600;
+  let segments = 0;
+
+  for (const object of objects) {
+    if (!object.points || object.points.length < 2) continue;
+    for (let i = 1; i < object.points.length; i++) {
+      if (segments > maxSegments) return;
+      const a = basisFromWorldPoint(object.points[i - 1]);
+      const b = basisFromWorldPoint(object.points[i]);
+      if (!a || !b) continue;
+      drawingSegmentToShapeItems(items, params, a, b, object);
+      segments++;
+    }
+  }
+}
+
+function renderShapeItem(item, size) {
+  if (item.type === "quad") renderShapeQuad(item, size);
+  else renderShapeLine(item, size);
+}
+
+function renderShapePreview() {
+  resizeShapeCanvas();
+  const w = shapeCanvas.width;
+  const h = shapeCanvas.height;
+  shapeCtx.clearRect(0, 0, w, h);
+
+  const gradient = shapeCtx.createLinearGradient(0, 0, 0, h);
+  gradient.addColorStop(0, "#fffefa");
+  gradient.addColorStop(1, "#f1eee6");
+  shapeCtx.fillStyle = gradient;
+  shapeCtx.fillRect(0, 0, w, h);
+
+  const params = shapeModelParameters();
+  const items = [];
+  const size = { width: w, height: h, scale: Math.min(w, h) * 0.31 };
+
+  addShapeSurface(items, params);
+  addShapeGrid(items, params);
+  addShapeDrawing(items, params);
+
+  // Larger rotated z values are closer to the camera. Draw far to near so
+  // back-side grid/drawing is hidden by the near side of the surface.
+  items.sort((a, b) => a.depth - b.depth).forEach(item => renderShapeItem(item, size));
+
+  const l1 = Math.round(length(surface.v1));
+  const l2 = Math.round(length(surface.v2));
+  const angle = Math.round(surfaceAngleRadians() * 180 / Math.PI);
+  let details = `${params.type} · |v1| ${l1} · |v2| ${l2} · angle ${angle}°`;
+  if (params.type === "Cylinder") {
+    const repeatVector = surface.repeatV1 ? surface.v1 : surface.v2;
+    const openVector = surface.repeatV1 ? surface.v2 : surface.v1;
+    details += ` · radius ${Math.round(length(repeatVector) / (Math.PI * 2))} · height ${Math.round(perpendicularLength(openVector, repeatVector))}`;
+  }
+
+  shapeCtx.fillStyle = "rgba(31,31,31,0.66)";
+  shapeCtx.font = `${Math.max(12, Math.round(w / 34))}px system-ui, sans-serif`;
+  shapeCtx.fillText(details, 16 * (w / Math.max(420, w)), h - 18 * (h / Math.max(300, h)));
+  shapeSummary.textContent = `${params.type} preview · drawing projected on surface · drag to rotate`;
+}
+
+function resetShapeViewForSurface() {
+  shapeView.zoom = 1.0;
+  if (surface.repeatV1 && surface.repeatV2) {
+    shapeView.yaw = -0.74;
+    shapeView.pitch = 0.45;
+  } else if (surface.repeatV1) {
+    shapeView.yaw = -0.56;
+    shapeView.pitch = 0.42;
+  } else if (surface.repeatV2) {
+    shapeView.yaw = 1.08;
+    shapeView.pitch = 0.34;
+  } else {
+    shapeView.yaw = -0.62;
+    shapeView.pitch = 0.62;
+  }
+}
+
+function toggleShapePanel(forceOpen = null) {
+  const shouldOpen = forceOpen === null ? !shapePanel.classList.contains("open") : forceOpen;
+  shapePanel.classList.toggle("open", shouldOpen);
+  if (shouldOpen) renderShapePreview();
+}
+
+function handleShapePointerDown(event) {
+  event.preventDefault();
+  shapeCanvas.setPointerCapture(event.pointerId);
+  shapeDrag = { x: event.clientX, y: event.clientY, yaw: shapeView.yaw, pitch: shapeView.pitch };
+  shapeCanvas.classList.add("dragging");
+}
+
+function handleShapePointerMove(event) {
+  if (!shapeDrag) return;
+  event.preventDefault();
+  shapeView.yaw = shapeDrag.yaw + (event.clientX - shapeDrag.x) * 0.012;
+  shapeView.pitch = clamp(shapeDrag.pitch + (event.clientY - shapeDrag.y) * 0.01, -1.25, 1.25);
+  renderShapePreview();
+}
+
+function handleShapePointerEnd(event) {
+  if (!shapeDrag) return;
+  event.preventDefault();
+  shapeDrag = null;
+  shapeCanvas.classList.remove("dragging");
+}
+
+function handleShapeWheel(event) {
+  event.preventDefault();
+  shapeView.zoom = clamp(shapeView.zoom * Math.exp(-event.deltaY * 0.0012), 0.65, 2.8);
+  renderShapePreview();
 }
 
 function handleWheel(event) {
@@ -1590,13 +2425,16 @@ function handleKeyDown(event) {
     requestRender();
   } else if (key === "i") {
     event.preventDefault();
-    backgroundInput.click();
+    imagePanel.classList.toggle("open");
   } else if (key === "?" || (event.shiftKey && key === "/")) {
     event.preventDefault();
     helpPanel.classList.toggle("open");
   } else if (key === "escape") {
     geometryPanel.classList.remove("open");
+    imagePanel.classList.remove("open");
     helpPanel.classList.remove("open");
+    shapePanel.classList.remove("open");
+    if (placementEditor.active) stopImagePlacement(false);
     hideAngleHint();
   }
 }
@@ -1636,8 +2474,30 @@ geometryButton.addEventListener("click", () => {
   geometryPanel.classList.toggle("open");
 });
 
+imageButton.addEventListener("click", () => {
+  imagePanel.classList.toggle("open");
+  updateImagePanelState();
+});
+
+imageCloseButton.addEventListener("click", () => {
+  imagePanel.classList.remove("open");
+});
+
 helpButton.addEventListener("click", () => {
   helpPanel.classList.toggle("open");
+});
+
+shapeButton.addEventListener("click", () => toggleShapePanel());
+shapeCloseButton.addEventListener("click", () => toggleShapePanel(false));
+shapeCanvas.addEventListener("pointerdown", handleShapePointerDown);
+shapeCanvas.addEventListener("pointermove", handleShapePointerMove);
+shapeCanvas.addEventListener("pointerup", handleShapePointerEnd);
+shapeCanvas.addEventListener("pointercancel", handleShapePointerEnd);
+shapeCanvas.addEventListener("wheel", handleShapeWheel, { passive: false });
+
+sizeInput.addEventListener("input", () => {
+  storeVisibleSize();
+  scheduleAutosave();
 });
 
 resetGeometryButton.addEventListener("click", resetSurfaceFields);
@@ -1646,6 +2506,18 @@ fitCellButton.addEventListener("click", fitCellToView);
 fitSurfaceToImageButton.addEventListener("click", fitSurfaceToImage);
 imageCropButton.addEventListener("click", () => setImageFitMode("crop"));
 imageStretchButton.addEventListener("click", () => setImageFitMode("stretch"));
+imageManualButton.addEventListener("click", () => {
+  setImageFitMode("manual");
+  if (background.image) startImagePlacement();
+});
+imageOpacityInput.addEventListener("input", () => setImageOpacityFromControl(false));
+imageOpacityInput.addEventListener("change", () => setImageOpacityFromControl(true));
+imageKeepAspectInput.addEventListener("change", () => {
+  if (placementEditor.active && placementEditor.draft) placementEditor.draft.keepAspect = imageKeepAspectInput.checked;
+});
+editImagePlacementButton.addEventListener("click", startImagePlacement);
+cancelPlacementButton.addEventListener("click", () => stopImagePlacement(false));
+donePlacementButton.addEventListener("click", () => stopImagePlacement(true));
 updateSurfaceButton.addEventListener("click", applySurfaceFromControls);
 backgroundInput.addEventListener("change", event => loadBackground(event.target.files[0]));
 removeBackgroundButton.addEventListener("click", () => removeBackground());
@@ -1668,8 +2540,13 @@ document.addEventListener("keyup", handleKeyUp);
 window.addEventListener("resize", resizeCanvas);
 
 writeSurfaceToControls();
+drawingSize = DEFAULT_DRAW_SIZE;
+eraserSize = DEFAULT_ERASER_SIZE;
 hideGridInput.checked = DEFAULT_HIDE_GRID;
 setImageFitMode(DEFAULT_IMAGE_FIT_MODE, false);
+imageOpacity = DEFAULT_IMAGE_OPACITY;
+imagePlacement = defaultManualPlacement();
+updateImagePanelState();
 syncZoomSlider();
 updateHistoryButtons();
 setDefaultStatus();

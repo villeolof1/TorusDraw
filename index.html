@@ -45,11 +45,7 @@
       <div class="divider"></div>
 
       <button id="geometryButton" class="ghost-button" title="Edit displacement vectors — shortcut G">Surface</button>
-      <label class="upload-button" title="Upload an image into each surface cell — shortcut I">
-        Image
-        <input id="backgroundInput" type="file" accept="image/*" />
-      </label>
-      <button id="removeBackgroundButton" class="ghost-button" title="Remove background image">No image</button>
+      <button id="imageButton" class="ghost-button" title="Image settings — shortcut I">Image</button>
 
       <div class="divider"></div>
 
@@ -78,20 +74,62 @@
         <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
       </div>
 
-      <div class="surface-section">
-        <div class="surface-section-title">Image in cells</div>
-        <div class="segmented-control" aria-label="Image fit mode">
-          <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
-          <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
-        </div>
-        <button id="fitSurfaceToImageButton" class="ghost-button panel-wide-button" type="button">Fit surface to image</button>
-      </div>
 
       <div class="panel-actions">
         <button id="resetGeometryButton" class="ghost-button">Reset surface</button>
         <button id="centerViewButton" class="ghost-button">Center</button>
         <button id="fitCellButton" class="ghost-button">Fit cell</button>
         <button id="updateSurfaceButton" class="primary-button">Update surface</button>
+      </div>
+    </section>
+
+    <section id="imagePanel" class="panel image-panel" aria-label="Image controls">
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-title">Image</div>
+          <div id="imageSummary" class="panel-subtitle">No image added</div>
+        </div>
+        <button id="imageCloseButton" class="mini-close" aria-label="Close image panel">×</button>
+      </div>
+
+      <div class="surface-section image-actions-section">
+        <label class="upload-button panel-wide-button image-upload-control" title="Upload or replace image">
+          Upload / replace image
+          <input id="backgroundInput" type="file" accept="image/*" />
+        </label>
+        <button id="removeBackgroundButton" class="ghost-button panel-wide-button" type="button">Remove image</button>
+      </div>
+
+      <div class="surface-section">
+        <div class="surface-section-title">Fit mode</div>
+        <div class="segmented-control" aria-label="Image fit mode">
+          <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
+          <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
+          <button id="imageManualButton" class="mini-toggle" type="button" title="Place the image exactly inside the cell">Manual</button>
+        </div>
+      </div>
+
+      <div class="surface-section">
+        <div class="surface-section-title">Opacity</div>
+        <label class="opacity-control">
+          <input id="imageOpacityInput" type="range" min="15" max="100" value="76" />
+          <span id="imageOpacityValue">76%</span>
+        </label>
+      </div>
+
+      <div class="surface-section">
+        <button id="fitSurfaceToImageButton" class="ghost-button panel-wide-button" type="button">Fit surface to image</button>
+        <button id="editImagePlacementButton" class="ghost-button panel-wide-button" type="button">Edit image placement</button>
+      </div>
+    </section>
+
+    <section id="placementPanel" class="panel placement-panel" aria-label="Image placement controls">
+      <div class="panel-title">Image placement</div>
+      <p class="panel-copy">Drag the image to move it. Drag the corner handle to resize. Anything outside the cell is cropped.</p>
+      <label class="placement-check"><input id="imageKeepAspectInput" type="checkbox" checked /> Keep proportions</label>
+      <div class="panel-actions">
+        <button id="cancelPlacementButton" class="ghost-button" type="button">Cancel</button>
+        <button id="donePlacementButton" class="primary-button" type="button">Done</button>
       </div>
     </section>
 
@@ -102,6 +140,19 @@
     </aside>
 
     <button id="helpButton" class="floating-help-button" aria-label="Show shortcuts" title="Show shortcuts">?</button>
+    <button id="shapeButton" class="floating-shape-button" aria-label="Show 3D surface preview" title="Show 3D surface preview">3D</button>
+
+    <section id="shapePanel" class="panel shape-panel" aria-label="3D surface preview">
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-title">Surface preview</div>
+          <div id="shapeSummary" class="panel-subtitle">Drag to rotate · wheel to zoom</div>
+        </div>
+        <button id="shapeCloseButton" class="mini-close" aria-label="Close 3D preview">×</button>
+      </div>
+      <canvas id="shapeCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
+      <div class="shape-caption">This shows the current surface, grid, and drawing projected onto the 3D model.</div>
+    </section>
 
     <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">
       <div class="panel-title">Shortcuts</div>
@@ -118,10 +169,11 @@
         <div><kbd>+</kbd> / <kbd>-</kbd></div><div>Zoom in / out</div>
         <div><kbd>0</kbd></div><div>Center view</div>
         <div><kbd>F</kbd></div><div>Fit one cell</div>
+        <div><kbd>3D</kbd></div><div>Surface preview button</div>
         <div><kbd>G</kbd></div><div>Toggle surface panel</div>
         <div><kbd>U</kbd></div><div>Update surface</div>
         <div><kbd>H</kbd></div><div>Toggle grid</div>
-        <div><kbd>I</kbd></div><div>Upload image</div>
+        <div><kbd>I</kbd></div><div>Image panel</div>
         <div><kbd>Ctrl/Cmd + S</kbd></div><div>Save project</div>
         <div><kbd>Esc</kbd></div><div>Close panels</div>
         <div><kbd>Ctrl/Cmd + Z</kbd></div><div>Undo</div>
