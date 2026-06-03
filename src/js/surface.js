@@ -1,6 +1,6 @@
 // Surface and image settings. Typed surface edits apply only when Update is pressed.
 import { DEFAULT_SURFACE, state } from "./state.js";
-import { clamp, cloneSurface, determinant, displacement, length, scale, surfacesEqual, worldToBasis } from "./math.js";
+import { clamp, cloneSurface, determinant, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
 import { requestRender, redraw } from "./render2d.js";
 import { showStatus } from "./dom.js";
 import { scheduleAutosave, setBackgroundFromDataUrl } from "./storage.js";
@@ -18,17 +18,18 @@ export function writeSurfaceControls() {
   ui.b1Input.value = Math.round(-surface.v1.y);
   ui.a2Input.value = Math.round(surface.v2.x);
   ui.b2Input.value = Math.round(-surface.v2.y);
-  ui.repeatV1Input.checked = surface.repeatV1;
-  ui.repeatV2Input.checked = surface.repeatV2;
+  const topo = edgeTopology(surface);
+  ui.repeatV1Input.checked = topo.repeatV1;
+  ui.repeatV2Input.checked = topo.repeatV2;
   ui.hideGridInput.checked = state.hideGrid;
+  syncEdgeUi();
 }
 
 export function readSurfaceControls() {
   return {
     v1: { x: Number(state.ui.a1Input.value) || 0, y: -(Number(state.ui.b1Input.value) || 0) },
     v2: { x: Number(state.ui.a2Input.value) || 0, y: -(Number(state.ui.b2Input.value) || 0) },
-    repeatV1: state.ui.repeatV1Input.checked,
-    repeatV2: state.ui.repeatV2Input.checked
+    edgeLinks: normalizeEdgeLinks(state.surface.edgeLinks, state.surface)
   };
 }
 
@@ -36,15 +37,17 @@ function anchorForCurrentView(surfaceValue = state.surface) {
   const basis = worldToBasis({ x: state.view.x, y: state.view.y }, surfaceValue);
   if (!basis) return { i: 0, j: 0, point: { x: 0, y: 0 } };
 
-  const i = surfaceValue.repeatV1 ? Math.floor(basis.u) : 0;
-  const j = surfaceValue.repeatV2 ? Math.floor(basis.v) : 0;
+  const topo = edgeTopology(surfaceValue);
+  const i = topo.repeatV1 ? Math.floor(basis.u) : 0;
+  const j = topo.repeatV2 ? Math.floor(basis.v) : 0;
   return { i, j, point: displacement(surfaceValue, i, j) };
 }
 
 function validate(surface) {
-  if (surface.repeatV1 && length(surface.v1) < 1) return "v1 is enabled, so it needs a non-zero displacement.";
-  if (surface.repeatV2 && length(surface.v2) < 1) return "v2 is enabled, so it needs a non-zero displacement.";
-  if (surface.repeatV1 && surface.repeatV2 && Math.abs(determinant(surface)) < 0.001) return "For a torus, v1 and v2 cannot be parallel.";
+  const topo = edgeTopology(surface);
+  if (topo.repeatV1 && length(surface.v1) < 1) return "A links left/right, so v1 needs a non-zero displacement.";
+  if (topo.repeatV2 && length(surface.v2) < 1) return "B links bottom/top, so v2 needs a non-zero displacement.";
+  if ((topo.repeatV1 || topo.repeatV2) && Math.abs(determinant(surface)) < 0.001) return "The cell vectors cannot be parallel or collapsed.";
   return null;
 }
 
@@ -59,7 +62,14 @@ function clearForSurfaceChange() {
 export function applySurface(next, message = "Surface updated.", confirmMessage = "Changing the surface clears the existing drawing. Continue?") {
   const error = validate(next);
   if (error) { showStatus(error); writeSurfaceControls(); return false; }
-  if (surfacesEqual(next, state.surface)) { writeSurfaceControls(); return true; }
+  if (surfacesEqual(next, state.surface)) {
+    state.surface = cloneSurface(next);
+    writeSurfaceControls();
+    scheduleAutosave();
+    showStatus("Edge links updated.");
+    requestRender();
+    return true;
+  }
   if (state.objects.length && !window.confirm(confirmMessage)) { writeSurfaceControls(); showStatus("Surface unchanged."); return false; }
   const anchorBefore = anchorForCurrentView(state.surface);
   if (state.objects.length) clearForSurfaceChange();
@@ -160,8 +170,7 @@ function surfaceForImage() {
   return {
     v1: { x: Math.max(80, Math.round(img.naturalWidth * factor)), y: 0 },
     v2: { x: 0, y: -Math.max(80, Math.round(img.naturalHeight * factor)) },
-    repeatV1: true,
-    repeatV2: true
+    edgeLinks: normalizeEdgeLinks(state.surface.edgeLinks, state.surface)
   };
 }
 
@@ -192,6 +201,74 @@ export function removeImage() {
   syncImageUi();
   scheduleAutosave();
   showStatus("Image removed.");
+  requestRender();
+}
+
+const EDGE_COLORS = { v1: "#2f68d8", v2: "#c46a22" };
+const EDGE_GEOMETRY = {
+  left: { x1: 50, y1: 115, x2: 50, y2: 35, pair: "v1" },
+  right: { x1: 170, y1: 115, x2: 170, y2: 35, pair: "v1" },
+  bottom: { x1: 50, y1: 115, x2: 170, y2: 115, pair: "v2" },
+  top: { x1: 50, y1: 35, x2: 170, y2: 35, pair: "v2" }
+};
+
+export function syncEdgeUi() {
+  const svg = state.ui.edgeDiagram;
+  if (!svg) return;
+  const links = normalizeEdgeLinks(state.surface.edgeLinks, state.surface);
+  state.surface.edgeLinks = links;
+  const arrow = (edge, pair) => {
+    const g = EDGE_GEOMETRY[edge];
+    const dir = links[pair].direction[edge] || 1;
+    const color = links[pair].active ? EDGE_COLORS[pair] : "rgba(31,31,31,.22)";
+    const sx = dir === 1 ? g.x1 : g.x2, sy = dir === 1 ? g.y1 : g.y2;
+    const ex = dir === 1 ? g.x2 : g.x1, ey = dir === 1 ? g.y2 : g.y1;
+    const x1 = sx + (ex - sx) * 0.39, y1 = sy + (ey - sy) * 0.39;
+    const x2 = sx + (ex - sx) * 0.61, y2 = sy + (ey - sy) * 0.61;
+    const label = links[pair].active ? links[pair].label : "";
+    const lx = (g.x1 + g.x2) / 2, ly = (g.y1 + g.y2) / 2;
+    const dy = edge === "top" ? -14 : edge === "bottom" ? 22 : 4;
+    const dx = edge === "left" ? -20 : edge === "right" ? 20 : 0;
+    return `<line class="edge-arrow ${links[pair].active ? "" : "edge-open"}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="${color}" marker-end="url(#arrow-${pair})"/>${label ? `<text class="edge-label" x="${lx + dx}" y="${ly + dy}" text-anchor="middle">${label}</text>` : ""}`;
+  };
+  svg.innerHTML = `
+    <defs>
+      <marker id="arrow-v1" markerWidth="5" markerHeight="5" refX="4.4" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="${EDGE_COLORS.v1}"/></marker>
+      <marker id="arrow-v2" markerWidth="5" markerHeight="5" refX="4.4" refY="2.5" orient="auto"><path d="M0,0 L5,2.5 L0,5 Z" fill="${EDGE_COLORS.v2}"/></marker>
+    </defs>
+    <path class="cell-edge" d="M50 35 H170 V115 H50 Z"/>
+    ${arrow("left", "v1")}${arrow("right", "v1")}${arrow("bottom", "v2")}${arrow("top", "v2")}
+    ${Object.keys(EDGE_GEOMETRY).map(edge => { const g = EDGE_GEOMETRY[edge]; return `<line class="edge-hit" data-edge="${edge}" x1="${g.x1}" y1="${g.y1}" x2="${g.x2}" y2="${g.y2}"/>`; }).join("")}
+  `;
+  svg.querySelectorAll(".edge-hit").forEach(line => line.addEventListener("click", () => flipOrActivateEdge(line.dataset.edge)));
+  state.ui.removeV1LinkButton.textContent = links.v1.active ? "Remove A" : "Add A";
+  state.ui.removeV2LinkButton.textContent = links.v2.active ? "Remove B" : "Add B";
+  const topo = edgeTopology(state.surface);
+  const type = !topo.repeatV1 && !topo.repeatV2 ? "Plane" : topo.repeatV1 && topo.repeatV2 ? (topo.flipU || topo.flipV ? "Klein-style" : "Torus") : (topo.flipU || topo.flipV ? "Möbius-style" : "Cylinder");
+  state.ui.edgeStatus.textContent = `${type}. Click a colored side to flip its arrow; remove a pair to leave that direction open.`;
+  state.ui.repeatV1Input.checked = topo.repeatV1;
+  state.ui.repeatV2Input.checked = topo.repeatV2;
+}
+
+function flipOrActivateEdge(edge) {
+  const pair = EDGE_GEOMETRY[edge].pair;
+  const links = normalizeEdgeLinks(state.surface.edgeLinks, state.surface);
+  if (!links[pair].active) links[pair].active = true;
+  else links[pair].direction[edge] *= -1;
+  applyTopologyLinks(links, "Edge direction updated.");
+}
+
+export function toggleEdgePair(pair) {
+  const links = normalizeEdgeLinks(state.surface.edgeLinks, state.surface);
+  links[pair].active = !links[pair].active;
+  applyTopologyLinks(links, links[pair].active ? "Edge pair linked." : "Edge pair removed.");
+}
+
+function applyTopologyLinks(links, message) {
+  state.surface = cloneSurface({ ...state.surface, edgeLinks: links });
+  writeSurfaceControls();
+  scheduleAutosave();
+  showStatus(message);
   requestRender();
 }
 

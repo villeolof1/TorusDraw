@@ -1,6 +1,6 @@
 // Pointer input: drawing, panning, line snapping, and two eraser styles.
 import { state, cloneObjects } from "./state.js";
-import { add, clamp, displacement, length, scale, screenToWorld, sub, visibleOffsets } from "./math.js";
+import { add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell } from "./math.js";
 import { hideAngleHint, showAngleHint } from "./dom.js";
 import { addObject, replaceAll } from "./history.js";
 import { redraw, requestRender } from "./render2d.js";
@@ -28,7 +28,7 @@ export function chooseTool(tool) {
   state.ui.eraseButton.classList.toggle("active", tool === "erase");
   state.ui.homButton.classList.toggle("active", tool === "hom");
   state.ui.panButton.classList.toggle("active", tool === "pan");
-  state.ui.eraserOptions.hidden = tool !== "erase";
+  setEraserOptionsVisible(tool === "erase");
   state.canvas.classList.toggle("panning", tool === "pan" || spaceDown);
   state.canvas.classList.toggle("homing", tool === "hom");
   state.ui.sizeInput.value = tool === "erase" ? state.eraserSize : state.penSize;
@@ -37,6 +37,19 @@ export function chooseTool(tool) {
     state.homSelectedId = null;
   }
   hideAngleHint();
+}
+
+function setEraserOptionsVisible(visible) {
+  const options = state.ui.eraserOptions;
+  if (visible) {
+    options.hidden = false;
+    requestAnimationFrame(() => options.classList.add("visible"));
+    return;
+  }
+  options.classList.remove("visible");
+  window.setTimeout(() => {
+    if (state.tool !== "erase") options.hidden = true;
+  }, 210);
 }
 
 export function saveCurrentSize() {
@@ -74,9 +87,8 @@ function hitObject(object, localPoint, radius) {
 }
 function localHitPoint(object, worldPoint, radius) {
   for (const offset of visibleOffsets(state)) {
-    const d = displacement(state.surface, offset.i, offset.j);
-    const local = sub(worldPoint, d);
-    if (hitObject(object, local, radius)) return local;
+    const local = worldToBaseFromCell(worldPoint, state.surface, offset);
+    if (local && hitObject(object, local, radius)) return local;
   }
   return null;
 }
@@ -85,9 +97,8 @@ function objectHitAt(worldPoint, radius = 12 / Math.max(0.2, state.view.zoom)) {
   let best = null;
   for (const object of state.objects) {
     for (const offset of visibleOffsets(state)) {
-      const d = displacement(state.surface, offset.i, offset.j);
-      const local = sub(worldPoint, d);
-      if (hitObject(object, local, radius)) best = { object, offset };
+      const local = worldToBaseFromCell(worldPoint, state.surface, offset);
+      if (local && hitObject(object, local, radius)) best = { object, offset };
     }
   }
   return best;

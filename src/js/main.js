@@ -5,7 +5,7 @@ import { chooseTool, handleSpace, movePointer, saveCurrentSize, setEraserMode, s
 import { clearDrawing, redo, undo, updateHistoryButtons } from "./history.js";
 import { drawPreview3d, initPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { requestRender, resizeCanvas } from "./render2d.js";
-import { applySurface, centerView, exportPNG, fitCellToView, fitSurfaceToImage, loadImageFile, readSurfaceControls, removeImage, resetSurface, setImageFitMode, setImageOpacity, setZoom, sliderToZoom, syncImageUi, syncZoomSlider, writeSurfaceControls } from "./surface.js";
+import { applySurface, centerView, exportPNG, fitCellToView, fitSurfaceToImage, loadImageFile, readSurfaceControls, removeImage, resetSurface, setImageFitMode, setImageOpacity, setZoom, sliderToZoom, syncImageUi, syncZoomSlider, syncEdgeUi, toggleEdgePair, writeSurfaceControls } from "./surface.js";
 import { openProjectFile, resetEverything, restoreAutosave, saveProject, scheduleAutosave } from "./storage.js";
 
 collectDom();
@@ -72,7 +72,8 @@ function wireSurfaceAndImage() {
   state.ui.centerViewButton.onclick = centerView;
   state.ui.fitCellButton.onclick = fitCellToView;
   state.ui.hideGridInput.onchange = () => { state.hideGrid = state.ui.hideGridInput.checked; scheduleAutosave(); requestRender(); };
-  state.ui.repeatV1Input.onchange = state.ui.repeatV2Input.onchange = () => showStatus("Repeat setting changed. Click Update.");
+  state.ui.removeV1LinkButton.onclick = () => toggleEdgePair("v1");
+  state.ui.removeV2LinkButton.onclick = () => toggleEdgePair("v2");
   state.ui.backgroundInput.onchange = e => loadImageFile(e.target.files[0]);
   state.ui.removeImageButton.onclick = removeImage;
   state.ui.imageCropButton.onclick = () => setImageFitMode("crop");
@@ -107,6 +108,6 @@ document.addEventListener("pointerdown", event => {
   if (!state.ui.sizeBlock.contains(event.target)) blurSizeInput();
 }, { capture: true });
 
-writeSurfaceControls(); syncImageUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
+writeSurfaceControls(); syncEdgeUi(); syncImageUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
 chooseTool("pen"); setEraserMode("object");
 restoreAutosave().then(() => { refreshSizeInput(); requestRender(); drawPreview3d(); });

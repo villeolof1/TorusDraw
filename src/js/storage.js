@@ -109,6 +109,7 @@ export function resetEverything() {
   state.ui.panButton.classList.remove("active");
   state.ui.eraseObjectButton.classList.add("active");
   state.ui.eraseRubButton.classList.remove("active");
+  state.ui.eraserOptions.classList.remove("visible");
   state.ui.eraserOptions.hidden = true;
   state.homHoverId = null;
   state.homHoverOffset = { i: 0, j: 0 };

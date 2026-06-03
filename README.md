@@ -9,7 +9,7 @@ The app supports:
 - Default eraser size: **20**.
 - Infinite panning and bounded zoom.
 - Custom surface vectors `v1 = (a1, b1)` and `v2 = (a2, b2)`, where positive `a` goes right and positive `b` goes up.
-- Torus, cylinder, or plane behavior through Repeat v1 / Repeat v2.
+- Edge-gluing arrows in the Surface panel: open plane, cylinders, torus, Möbius-style bands, and Klein-style surfaces without presets.
 - Image backgrounds inside each cell, with Crop or Stretch fitting.
 - Image opacity, defaulting to **90%**.
 - Prompt to fit the surface dimensions to the image when uploading.
@@ -66,18 +66,23 @@ v1 = (a1, b1)
 v2 = (a2, b2)
 ```
 
-Each repeated copy is shifted by an integer combination of those vectors:
+The edge diagram controls how the cell sides are glued. Matching arrows are linked sides; removing a pair leaves those sides open. Clicking a linked side flips its arrow direction, which creates reversed gluings such as Möbius-style and Klein-style surfaces.
 
-```text
-i * v1 + j * v2
-```
-
-- Repeat v1 + Repeat v2 = torus.
-- Repeat v1 only = cylinder along v1.
-- Repeat v2 only = cylinder along v2.
-- Neither repeat = ordinary plane.
+Changing only the edge arrows does not clear the drawing, because the drawing still lives in the same cell. Changing `v1`/`v2` geometry still asks before clearing existing drawing data.
 
 Typed surface changes do not apply while typing. Click **Update** to apply them. Updating keeps the origin/anchor fixed and does not automatically recenter the view; use **Center** or **Fit cell** when you explicitly want the camera to move. **Reset surface** applies immediately and asks before clearing an existing drawing if necessary.
+
+## Edge gluing
+
+The Surface panel contains a small cell diagram. The blue `A` arrows link left/right edges; the orange `B` arrows link bottom/top edges. Use **Remove A** or **Remove B** to leave that pair open. Click an arrow to reverse that side of the identification.
+
+Common results emerge from the arrows rather than presets:
+
+- no links = plane
+- one same-direction link = cylinder
+- one reversed link = Möbius-style band
+- two same-direction links = torus
+- one same and one reversed link = Klein-style surface
 
 ## 3D preview accuracy
 
@@ -85,15 +90,14 @@ The 3D preview maps the drawing through the same surface coordinates used by the
 
 1. A drawing point is converted into `(u, v)` coordinates relative to `v1` and `v2`.
 2. Repeated coordinates wrap according to the active topology.
-3. The point is placed on the 3D torus, cylinder, or plane preview.
+3. The point is placed on the 3D torus, cylinder, Möbius-style, Klein-style, or plane preview.
 
 This makes the preview topologically accurate: wrapping direction, cylinder direction, skewed/parallelogram coordinates, background texture placement, and drawing placement all follow the active surface parameters. The 3D model is a readable visual embedding of that topology, not a claim that every possible flat torus lattice can be isometrically embedded in ordinary 3D space.
 
-The **Enhanced visibility** toggle is on by default. It makes preview strokes easier to see by enlarging their displayed thickness and adding a subtle lift/halo. Position, wrapping, background texture mapping, and occlusion remain accurate, but the preview line thickness is visually enlarged.
 
 ## Homology tool
 
-Choose **Hom** or press `5`, then click a stroke. The main value `(m, n)` counts the net integer grid crossings along the actual path: the first number is crossings along `v1`, and the second is crossings along `v2`. Under it, the label also shows the raw endpoint displacement rounded to two decimals. On cylinders, non-repeating directions are shown as `—`; on a plane there is no homology class.
+Choose **Hom** or press `5`, then click a stroke. The main value `(m, n)` counts the net integer grid crossings along the actual path: the first number is crossings along `v1`, and the second is crossings along `v2`. Under it, the label also shows the raw endpoint displacement rounded to two decimals. Open/non-linked directions are shown as `—`; on a plane there is no homology class.
 
 ## Image workflow
 
@@ -141,7 +145,7 @@ Press `Shift+C` to reset the entire app to a blank default state. The app asks f
 
 ## 3D preview readability
 
-The 3D preview uses a mostly white model with subtle depth. With **Enhanced visibility** on, strokes are drawn thicker and clearer in the preview with a note that preview thickness is visually enlarged. With it off, stroke width stays closer to the calculated surface size.
+The 3D preview uses a mostly white model with subtle depth and readable strokes rendered on the surface.
 
 ## Latest 3D preview update
 
@@ -149,4 +153,22 @@ The 3D preview renderer was restored to the earlier cleaner model style while ke
 
 ## 3D renderer accuracy update
 
-The 3D preview now uses a WebGL parameter-surface renderer. The single surface cell is mapped to the full torus/cylinder/plane, and the grid, uploaded image texture, and drawing strokes all use the same `(u, v)` cell coordinates. Strokes are rendered as small lifted ribbons on the surface, with depth testing so far-side strokes are hidden by the torus instead of appearing through it or floating in the air. Enhanced visibility still enlarges preview stroke thickness for readability, but the stroke position and wrapping remain tied to the surface coordinates.
+The 3D preview now uses a WebGL parameter-surface renderer. The single surface cell is mapped to the full torus/cylinder/plane, and the grid, uploaded image texture, and drawing strokes all use the same `(u, v)` cell coordinates. Strokes are rendered as small lifted ribbons on the surface, with depth testing so far-side strokes are hidden by the torus instead of appearing through it or floating in the air.
+
+## Latest gluing/seam fix
+
+The 3D renderer now splits stroke segments at cell seams before mapping them to the surface, then applies the linked-edge flip logic before building lifted stroke ribbons. This prevents strokes from being drawn as chords through the torus or across Möbius/Klein seams. The edge diagram arrows were also made smaller and centered on each side.
+
+## Latest layout update
+
+The interface is now split into smaller floating control groups instead of one large toolbar:
+
+- Bottom center: Color, Size, Pen, Line, Erase, Pan, Hom.
+- Eraser Object/Rub controls animate in only while Erase is selected.
+- Top center: Undo, Redo, Clear, Export, Save, Open.
+- Right side: Image button above Surface button, each opening a right-side floating panel.
+- Bottom left: ? above 3D; opening one closes the other.
+
+## Latest layout adjustment
+
+The 3D and help buttons are now in the bottom-right area, positioned to the left of the zoom rail so their panels do not overlap the zoom controls. The Image and Surface launcher buttons are now in the bottom-left area.

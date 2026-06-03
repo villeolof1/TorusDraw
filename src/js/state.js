@@ -3,7 +3,11 @@ export const DEFAULT_SURFACE = {
   v1: { x: 600, y: 0 },
   v2: { x: 0, y: -420 },
   repeatV1: true,
-  repeatV2: true
+  repeatV2: true,
+  edgeLinks: {
+    v1: { active: true, label: "A", edges: ["left", "right"], direction: { left: 1, right: 1 } },
+    v2: { active: true, label: "B", edges: ["bottom", "top"], direction: { bottom: 1, top: 1 } }
+  }
 };
 
 export const state = {

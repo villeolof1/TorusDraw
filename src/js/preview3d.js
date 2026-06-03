@@ -2,7 +2,7 @@
 // Everything in this renderer comes from the same single-cell (u, v) domain:
 // surface, image texture, grid, and lifted paint ribbons.
 import { state } from "./state.js";
-import { clamp, determinant, dot, length, worldToBasis } from "./math.js";
+import { clamp, determinant, dot, edgeTopology, length, worldToBasis } from "./math.js";
 
 let canvas;
 let gl;
@@ -32,13 +32,14 @@ export function initPreview3d() {
 
 export function resetPreviewAngle() {
   state.preview.zoom = 1.0;
-  if (state.surface.repeatV1 && state.surface.repeatV2) {
+  const topo = edgeTopology(state.surface);
+  if (topo.repeatV1 && topo.repeatV2) {
     state.preview.yaw = -0.74;
     state.preview.pitch = 0.45;
-  } else if (state.surface.repeatV1) {
+  } else if (topo.repeatV1) {
     state.preview.yaw = -0.56;
     state.preview.pitch = 0.42;
-  } else if (state.surface.repeatV2) {
+  } else if (topo.repeatV2) {
     state.preview.yaw = 1.08;
     state.preview.pitch = 0.34;
   } else {
@@ -169,12 +170,14 @@ function resizePreviewCanvas() {
 }
 
 function shapeType() {
-  if (state.surface.repeatV1 && state.surface.repeatV2) return "Torus";
-  if (state.surface.repeatV1 || state.surface.repeatV2) return "Cylinder";
+  const topo = edgeTopology(state.surface);
+  if (topo.repeatV1 && topo.repeatV2) return (topo.flipU || topo.flipV) ? "Klein" : "Torus";
+  if (topo.repeatV1 || topo.repeatV2) return (topo.flipU || topo.flipV) ? "Mobius" : "Cylinder";
   return "Plane";
 }
 
 function modelParameters() {
+  const topo = edgeTopology(state.surface);
   const l1 = Math.max(1, length(state.surface.v1));
   const l2 = Math.max(1, length(state.surface.v2));
   const det = determinant(state.surface);
@@ -185,19 +188,22 @@ function modelParameters() {
   if (type === "Torus") {
     let R = 1.28;
     let r = clamp((areaHeight / l1) * 1.18, 0.20, 0.82);
-    return { type, l1, l2, R, r, skew: clamp(skew, -1.8, 1.8) };
+    return { type, l1, l2, R, r, skew: clamp(skew, -1.8, 1.8), repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
   }
 
-  if (type === "Cylinder") {
-    const repeatIsV1 = state.surface.repeatV1;
+  if (type === "Klein") return { type, l1, l2, R: 1.08, r: 0.36, skew: clamp(skew, -1.2, 1.2), repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
+
+  if (type === "Cylinder" || type === "Mobius") {
+    const repeatIsV1 = topo.repeatV1;
     const repeatVector = repeatIsV1 ? state.surface.v1 : state.surface.v2;
     const openVector = repeatIsV1 ? state.surface.v2 : state.surface.v1;
     const repeatLength = Math.max(1, length(repeatVector));
     const openLength = Math.max(1, length(openVector));
     const openPerp = Math.max(openLength * 0.25, Math.abs(det) / repeatLength);
     return {
-      type, repeatIsV1,
-      radius: 0.78,
+      type, repeatIsV1, repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV,
+      radius: type === "Mobius" ? 0.92 : 0.78,
+      width: clamp(openPerp / repeatLength * 1.15, 0.32, 0.82),
       height: clamp(openPerp / repeatLength * 4.3, 1.15, 3.0),
       skew: clamp(dot(openVector, repeatVector) / Math.max(1, repeatLength * repeatLength), -1.8, 1.8),
       l1, l2
@@ -205,7 +211,7 @@ function modelParameters() {
   }
 
   const maxLen = Math.max(l1, l2, 1);
-  return { type, planeScale: 2.4 / maxLen, l1, l2 };
+  return { type, planeScale: 2.4 / maxLen, l1, l2, repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
 }
 
 function surfacePoint(u, v, params) {
@@ -217,6 +223,27 @@ function surfacePoint(u, v, params) {
       params.r * Math.sin(phi),
       (params.R + params.r * Math.cos(phi)) * Math.sin(theta)
     ];
+  }
+
+  if (params.type === "Mobius") {
+    const repeat = params.repeatIsV1 ? u : v;
+    const open = params.repeatIsV1 ? v : u;
+    const theta = TAU * repeat;
+    const w = (open - 0.5) * params.width;
+    const x = (params.radius + w * Math.cos(theta / 2)) * Math.cos(theta);
+    const y = w * Math.sin(theta / 2);
+    const z = (params.radius + w * Math.cos(theta / 2)) * Math.sin(theta);
+    return params.repeatIsV1 ? [x, y, z] : [y, x, z];
+  }
+
+  if (params.type === "Klein") {
+    const uu = TAU * (params.flipV ? v : u);
+    const vv = TAU * (params.flipV ? u : v);
+    const tube = Math.cos(uu / 2) * Math.sin(vv) - Math.sin(uu / 2) * Math.sin(2 * vv);
+    const x = (params.R + params.r * tube) * Math.cos(uu);
+    const z = (params.R + params.r * tube) * Math.sin(uu);
+    const y = params.r * (Math.sin(uu / 2) * Math.sin(vv) + Math.cos(uu / 2) * Math.sin(2 * vv));
+    return [x, y, z];
   }
 
   if (params.type === "Cylinder") {
@@ -273,8 +300,8 @@ function surfaceVertex(u, v, params, lift = 0) {
 
 function buildSurfaceMesh(params) {
   const out = [];
-  const uSteps = params.type === "Plane" ? 1 : params.type === "Torus" ? 128 : 96;
-  const vSteps = params.type === "Plane" ? 1 : params.type === "Torus" ? 64 : 48;
+  const uSteps = params.type === "Plane" ? 1 : (params.type === "Torus" || params.type === "Klein") ? 128 : 96;
+  const vSteps = params.type === "Plane" ? 1 : (params.type === "Torus" || params.type === "Klein") ? 64 : 48;
   for (let i = 0; i < uSteps; i++) {
     const u0 = i / uSteps;
     const u1 = (i + 1) / uSteps;
@@ -304,9 +331,9 @@ function buildGridMesh(params) {
 
 function pushRibbonFromUVLine(out, fn, params, halfWidth, lift, color) {
   const samples = [];
-  const count = 128;
+  const count = 160;
   for (let i = 0; i <= count; i++) samples.push(fn(i / count));
-  pushRibbon(out, samples, params, halfWidth, lift, color);
+  for (const path of splitAndGluePolyline(samples, params)) pushRibbon(out, path, params, halfWidth, lift, color);
 }
 
 function buildStrokeMesh(params) {
@@ -330,8 +357,8 @@ function strokeHalfWidth(object, params) {
   const l1 = Math.max(1, length(state.surface.v1));
   const l2 = Math.max(1, length(state.surface.v2));
   let scalePerWorld = 0.003;
-  if (params.type === "Torus") scalePerWorld = ((TAU * params.R) / l1 + (TAU * params.r) / l2) * 0.5;
-  if (params.type === "Cylinder") scalePerWorld = ((TAU * params.radius) / (params.repeatIsV1 ? l1 : l2) + params.height / (params.repeatIsV1 ? l2 : l1)) * 0.5;
+  if (params.type === "Torus" || params.type === "Klein") scalePerWorld = ((TAU * (params.R || 1)) / l1 + (TAU * (params.r || 0.35)) / l2) * 0.5;
+  if (params.type === "Cylinder" || params.type === "Mobius") scalePerWorld = ((TAU * params.radius) / (params.repeatIsV1 ? l1 : l2) + (params.height || params.width) / (params.repeatIsV1 ? l2 : l1)) * 0.5;
   if (params.type === "Plane") scalePerWorld = params.planeScale;
   const accurate = (object.size || 1) * scalePerWorld * 0.5;
   const enhanced = Math.max(accurate * 1.9, 0.014);
@@ -339,81 +366,108 @@ function strokeHalfWidth(object, params) {
 }
 
 function objectToUVPaths(object, params) {
-  const paths = [];
-  let current = [];
-  for (let i = 1; i < object.points.length; i++) {
-    const a = worldToBasis(object.points[i - 1], state.surface);
-    const b = worldToBasis(object.points[i], state.surface);
-    if (!a || !b) continue;
-    const pieces = splitSegmentAtSeams(a, b, params);
-    for (const piece of pieces) {
-      const samples = sampleSegment(piece[0], piece[1], params);
-      for (const uv of samples) {
-        if (!isVisibleUV(uv, params)) { if (current.length > 1) paths.push(current); current = []; continue; }
-        const wrapped = wrapForSurface(uv, params);
-        if (current.length && uvScreenJump(current[current.length - 1], wrapped)) { paths.push(current); current = []; }
-        current.push(wrapped);
-      }
-    }
-  }
-  if (current.length > 1) paths.push(current);
-  return paths.filter(path => path.length > 1);
+  const basisPoints = object.points.map(point => worldToBasis(point, state.surface)).filter(Boolean);
+  return splitAndGluePolyline(basisPoints, params);
 }
 
-function splitSegmentAtSeams(a, b, params) {
-  const repeatU = params.type === "Torus" || (params.type === "Cylinder" && params.repeatIsV1);
-  const repeatV = params.type === "Torus" || (params.type === "Cylinder" && !params.repeatIsV1);
-  const cuts = [0, 1];
-  for (const key of ["u", "v"]) {
-    const repeats = key === "u" ? repeatU : repeatV;
-    if (!repeats) continue;
-    const start = a[key];
-    const end = b[key];
-    const low = Math.min(start, end);
-    const high = Math.max(start, end);
-    for (let boundary = Math.floor(low) + 1; boundary <= Math.floor(high); boundary++) {
-      if (boundary <= low || boundary >= high) continue;
-      const t = (boundary - start) / (end - start);
-      if (t > 0.0001 && t < 0.9999) cuts.push(t);
+function splitAndGluePolyline(points, params) {
+  const paths = [];
+  let current = [];
+  const pushCurrent = () => { if (current.length > 1) paths.push(current); current = []; };
+
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    if (!a || !b) { pushCurrent(); continue; }
+    for (const piece of splitAndGlueSegment(a, b, params)) {
+      const sampled = sampleSegment(piece[0], piece[1], params);
+      if (sampled.length < 2) continue;
+      const first = sampled[0];
+      const last = current[current.length - 1];
+      if (!last || uvDistance(last, first) > 0.025) pushCurrent();
+      if (!current.length) current.push(first);
+      for (let k = 1; k < sampled.length; k++) current.push(sampled[k]);
     }
   }
-  cuts.sort((x, y) => x - y);
+  pushCurrent();
+  return paths;
+}
+
+function splitAndGlueSegment(a, b, params) {
+  const cuts = collectBoundaryCuts(a, b, params);
   const pieces = [];
   for (let i = 1; i < cuts.length; i++) {
-    const t0 = cuts[i - 1];
-    const t1 = cuts[i];
-    if (t1 - t0 < 0.0001) continue;
-    pieces.push([lerpUV(a, b, t0), lerpUV(a, b, t1)]);
+    let t0 = cuts[i - 1];
+    let t1 = cuts[i];
+    if (t1 - t0 < 0.00001) continue;
+    const mid = lerpUV(a, b, (t0 + t1) / 2);
+    if (!isVisibleLiftedUV(mid, params)) continue;
+
+    const crossed = t0 > 0.000001 || t1 < 0.999999;
+    const p0 = lerpUV(a, b, t0 === 0 ? t0 : t0 + 0.000001);
+    const p1 = lerpUV(a, b, t1 === 1 ? t1 : t1 - 0.000001);
+    const c0 = cellUVFromLifted(p0, params);
+    const c1 = cellUVFromLifted(p1, params);
+
+    // If a seam produced a long in-cell jump, do not draw a chord through the 3D model.
+    // The neighboring local piece will carry the continuation on the glued side.
+    if (crossed && uvDistance(c0, c1) > 0.78) continue;
+    pieces.push([c0, c1]);
   }
   return pieces;
 }
 
-function lerpUV(a, b, t) { return { u: a.u + (b.u - a.u) * t, v: a.v + (b.v - a.v) * t }; }
-
-function sampleSegment(a, b, params) {
-  const distance = Math.max(Math.abs(b.u - a.u), Math.abs(b.v - a.v));
-  const count = clamp(Math.ceil(distance * 220), 2, 64);
-  const samples = [];
-  for (let i = 0; i <= count; i++) samples.push(lerpUV(a, b, i / count));
-  return samples;
+function collectBoundaryCuts(a, b, params) {
+  const cuts = [0, 1];
+  addAxisCuts(cuts, a.u, b.u, axisRepeats("u", params) || axisOpen("u", params));
+  addAxisCuts(cuts, a.v, b.v, axisRepeats("v", params) || axisOpen("v", params));
+  cuts.sort((x, y) => x - y);
+  return cuts.filter((t, i) => t >= -0.000001 && t <= 1.000001 && (i === 0 || Math.abs(t - cuts[i - 1]) > 0.00001));
 }
 
-function isVisibleUV(uv, params) {
-  if (params.type === "Torus") return true;
-  if (params.type === "Cylinder") {
-    const open = params.repeatIsV1 ? uv.v : uv.u;
+function addAxisCuts(cuts, a, b, active) {
+  if (!active || !Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a - b) < 0.000001) return;
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  const first = Math.ceil(lo + 0.000001);
+  const last = Math.floor(hi - 0.000001);
+  for (let boundary = first; boundary <= last; boundary++) cuts.push((boundary - a) / (b - a));
+  if (lo < 0 && hi > 0) cuts.push((0 - a) / (b - a));
+  if (lo < 1 && hi > 1) cuts.push((1 - a) / (b - a));
+}
+
+function axisRepeats(axis, params) { return axis === "u" ? !!params.repeatV1 : !!params.repeatV2; }
+function axisOpen(axis, params) { return !axisRepeats(axis, params) && (params.type === "Plane" || params.type === "Cylinder" || params.type === "Mobius"); }
+
+function cellUVFromLifted(uv, params) {
+  const iu = params.repeatV1 ? Math.floor(uv.u) : 0;
+  const iv = params.repeatV2 ? Math.floor(uv.v) : 0;
+  let cu = params.repeatV1 ? uv.u - iu : uv.u;
+  let cv = params.repeatV2 ? uv.v - iv : uv.v;
+  if (params.flipV && params.repeatV1 && Math.abs(iu) % 2 === 1) cv = 1 - cv;
+  if (params.flipU && params.repeatV2 && Math.abs(iv) % 2 === 1) cu = 1 - cu;
+  return { u: clamp(cu, 0, 1), v: clamp(cv, 0, 1) };
+}
+
+function isVisibleLiftedUV(uv, params) {
+  if (params.type === "Torus" || params.type === "Klein") return true;
+  if (params.type === "Cylinder" || params.type === "Mobius") {
+    const open = params.repeatV1 ? uv.v : uv.u;
     return open >= -0.001 && open <= 1.001;
   }
   return uv.u >= -0.001 && uv.u <= 1.001 && uv.v >= -0.001 && uv.v <= 1.001;
 }
 
-function wrapForSurface(uv, params) {
-  if (params.type === "Torus") return { u: mod1(uv.u), v: mod1(uv.v) };
-  if (params.type === "Cylinder") return params.repeatIsV1 ? { u: mod1(uv.u), v: uv.v } : { u: uv.u, v: mod1(uv.v) };
-  return clampUV(uv);
-}
+function lerpUV(a, b, t) { return { u: a.u + (b.u - a.u) * t, v: a.v + (b.v - a.v) * t }; }
+function uvDistance(a, b) { return Math.hypot(a.u - b.u, a.v - b.v); }
 
-function uvScreenJump(a, b) { return Math.abs(a.u - b.u) > 0.55 || Math.abs(a.v - b.v) > 0.55; }
+function sampleSegment(a, b, params) {
+  const distance = Math.max(Math.abs(b.u - a.u), Math.abs(b.v - a.v));
+  const count = clamp(Math.ceil(distance * 260), 2, 96);
+  const samples = [];
+  for (let i = 0; i <= count; i++) samples.push(clampUV(lerpUV(a, b, i / count)));
+  return samples;
+}
 
 function pushRibbon(out, uvPath, params, halfWidth, lift, color) {
   if (uvPath.length < 2) return;

@@ -12,29 +12,32 @@
   <main id="app">
     <canvas id="drawingCanvas" aria-label="Infinite torus drawing canvas"></canvas>
 
-    <section id="toolbar" aria-label="Drawing controls">
-      <div class="tool-group">
-        <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
-        <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
-        <button id="eraseButton" class="tool-button" title="Erase — 3 or E. Shift+3 toggles eraser mode. Shift+E also works.">Erase</button>
-        <div id="eraserOptions" class="tool-group eraser-options" hidden>
-          <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
-          <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
-        </div>
-        <button id="panButton" class="tool-button" title="Pan — 4 or V. Hold Space for temporary pan.">Pan</button>
-        <button id="homButton" class="tool-button" title="Homology — 5. Click a stroke to inspect its cell displacement.">Hom</button>
-      </div>
-
-      <div class="divider"></div>
-
+    <section id="topActions" aria-label="History and file actions">
       <div class="tool-group compact-actions">
         <button id="undoButton" class="ghost-button" title="Undo — Ctrl/Cmd+Z">Undo</button>
         <button id="redoButton" class="ghost-button" title="Redo — Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo</button>
-        <button id="clearButton" class="ghost-button danger" title="Clear — C">Clear</button>
       </div>
 
       <div class="divider"></div>
 
+      <button id="clearButton" class="ghost-button danger" title="Clear — C">Clear</button>
+
+      <div class="divider file-divider"></div>
+
+      <button id="exportButton" class="ghost-button" title="Export current view as PNG">Export</button>
+      <button id="saveProjectButton" class="ghost-button" title="Save editable project — Ctrl/Cmd+S">Save</button>
+      <label class="upload-button" title="Open editable project">
+        Open
+        <input id="projectInput" type="file" accept="application/json,.json,.torusdraw" />
+      </label>
+    </section>
+
+    <section id="sideLauncher" aria-label="Surface and image sections">
+      <button id="imageButton" class="ghost-button" title="Image settings — I">Image</button>
+      <button id="surfaceButton" class="ghost-button" title="Surface settings — G">Surface</button>
+    </section>
+
+    <section id="toolbar" aria-label="Drawing tools">
       <label class="control-label color-control">
         <span>Color</span>
         <input id="colorInput" type="color" value="#111111" />
@@ -47,17 +50,17 @@
 
       <div class="divider"></div>
 
-      <button id="surfaceButton" class="ghost-button" title="Surface settings — G">Surface</button>
-      <button id="imageButton" class="ghost-button" title="Image settings — I">Image</button>
-
-      <div class="divider"></div>
-
-      <button id="exportButton" class="ghost-button" title="Export current view as PNG">Export</button>
-      <button id="saveProjectButton" class="ghost-button" title="Save editable project — Ctrl/Cmd+S">Save</button>
-      <label class="upload-button" title="Open editable project">
-        Open
-        <input id="projectInput" type="file" accept="application/json,.json,.torusdraw" />
-      </label>
+      <div class="tool-group primary-tools">
+        <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
+        <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
+        <button id="eraseButton" class="tool-button" title="Erase — 3 or E. Shift+3 toggles eraser mode. Shift+E also works.">Erase</button>
+        <div id="eraserOptions" class="tool-group eraser-options" hidden>
+          <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
+          <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
+        </div>
+        <button id="panButton" class="tool-button" title="Pan — 4 or V. Hold Space for temporary pan.">Pan</button>
+        <button id="homButton" class="tool-button" title="Homology — 5. Click a stroke to inspect its cell displacement.">Hom</button>
+      </div>
     </section>
 
     <section id="surfacePanel" class="panel" aria-label="Surface controls">
@@ -71,9 +74,18 @@
         <label>a2 <input id="a2Input" type="number" value="0" step="10" /></label>
         <label>b2 <input id="b2Input" type="number" value="420" step="10" /></label>
       </div>
+      <input id="repeatV1Input" type="checkbox" checked hidden />
+      <input id="repeatV2Input" type="checkbox" checked hidden />
+      <div class="edge-editor surface-section">
+        <div class="surface-section-title">Edges</div>
+        <svg id="edgeDiagram" class="edge-diagram" viewBox="0 0 220 150" role="img" aria-label="Edge gluing diagram"></svg>
+        <div id="edgeStatus" class="edge-status">Click an arrow to flip it. Remove a pair to leave that direction open.</div>
+        <div class="edge-actions">
+          <button id="removeV1LinkButton" class="ghost-button" type="button">Remove A</button>
+          <button id="removeV2LinkButton" class="ghost-button" type="button">Remove B</button>
+        </div>
+      </div>
       <div class="panel-toggles">
-        <label><input id="repeatV1Input" type="checkbox" checked /> Repeat v1</label>
-        <label><input id="repeatV2Input" type="checkbox" checked /> Repeat v2</label>
         <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
       </div>
       <div class="panel-actions">

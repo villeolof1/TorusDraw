@@ -9,7 +9,7 @@ export function collectDom() {
     "saveProjectButton", "projectInput", "surfacePanel", "imagePanel", "imageCloseButton", "imageSummary",
     "preview3dPanel", "preview3dCloseButton", "preview3dSummary", "helpPanel", "helpButton",
     "a1Input", "b1Input", "a2Input", "b2Input", "repeatV1Input", "repeatV2Input",
-    "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton",
+    "edgeDiagram", "edgeStatus", "removeV1LinkButton", "removeV2LinkButton", "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton",
     "backgroundInput", "removeImageButton", "imageCropButton", "imageStretchButton", "imageOpacityInput",
     "opacityValue", "fitSurfaceToImageButton", "preview3dCanvas", "zoomSlider", "zoomInButton",
     "zoomOutButton", "angleHint", "status"
@@ -20,19 +20,16 @@ export function collectDom() {
 }
 
 export function openPanel(name) {
-  // Surface is independent: users often keep it open while checking Image/3D/help.
-  // Image, 3D, and help are mutually exclusive with each other so they never stack.
-  const independentSurface = state.ui.surfacePanel;
-  const floatingPanels = { image: state.ui.imagePanel, preview: state.ui.preview3dPanel, help: state.ui.helpPanel };
+  // Keep the interface split into two non-overlapping stacks:
+  // right side: Image/Surface, bottom-left: Help/3D.
+  const rightPanels = { image: state.ui.imagePanel, surface: state.ui.surfacePanel };
+  const leftPanels = { preview: state.ui.preview3dPanel, help: state.ui.helpPanel };
+  const group = rightPanels[name] ? rightPanels : leftPanels[name] ? leftPanels : null;
+  if (!group) return;
 
-  if (name === "surface") {
-    independentSurface.classList.toggle("open");
-    return;
-  }
-
-  const target = floatingPanels[name];
+  const target = group[name];
   const shouldOpen = target && !target.classList.contains("open");
-  for (const panel of Object.values(floatingPanels)) panel.classList.remove("open");
+  for (const panel of Object.values(group)) panel.classList.remove("open");
   if (target && shouldOpen) target.classList.add("open");
 }
 
@@ -41,7 +38,7 @@ export function closePanels() {
 }
 
 export function closeFloatingPanelsOnly() {
-  for (const panel of [state.ui.imagePanel, state.ui.preview3dPanel, state.ui.helpPanel]) panel.classList.remove("open");
+  for (const panel of [state.ui.imagePanel, state.ui.surfacePanel, state.ui.preview3dPanel, state.ui.helpPanel]) panel.classList.remove("open");
 }
 
 export function showStatus(message, persistent = false) {

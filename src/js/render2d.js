@@ -1,6 +1,6 @@
 // Main canvas renderer. The canvas is only a view; objects are stored separately.
 import { state } from "./state.js";
-import { add, displacement, length, scale, visibleOffsets, worldToBasis, worldToScreen } from "./math.js";
+import { add, cellPoint, cellTransform, displacement, edgeTopology, length, scale, visibleOffsets, worldToBaseFromCell, worldToBasis, worldToScreen } from "./math.js";
 
 export function requestRender() {
   if (state.renderQueued) return;
@@ -36,12 +36,12 @@ function clearScreen() {
 
 function cellPath(offset) {
   const { ctx, surface } = state;
-  const d = displacement(surface, offset.i, offset.j);
+  const c = cellTransform(surface, offset.i, offset.j);
   ctx.beginPath();
-  ctx.moveTo(d.x, d.y);
-  ctx.lineTo(d.x + surface.v1.x, d.y + surface.v1.y);
-  ctx.lineTo(d.x + surface.v1.x + surface.v2.x, d.y + surface.v1.y + surface.v2.y);
-  ctx.lineTo(d.x + surface.v2.x, d.y + surface.v2.y);
+  ctx.moveTo(c.origin.x, c.origin.y);
+  ctx.lineTo(c.origin.x + c.e1.x, c.origin.y + c.e1.y);
+  ctx.lineTo(c.origin.x + c.e1.x + c.e2.x, c.origin.y + c.e1.y + c.e2.y);
+  ctx.lineTo(c.origin.x + c.e2.x, c.origin.y + c.e2.y);
   ctx.closePath();
 }
 
@@ -62,14 +62,14 @@ function imageCrop() {
 function drawCellImage(offset) {
   const { background, ctx, surface } = state;
   if (!background.image) return;
-  const d = displacement(surface, offset.i, offset.j);
+  const c = cellTransform(surface, offset.i, offset.j);
   const crop = imageCrop();
   ctx.save();
   cellPath(offset);
   ctx.clip();
   ctx.globalAlpha = state.imageOpacity;
-  ctx.translate(d.x, d.y);
-  ctx.transform(surface.v1.x, surface.v1.y, surface.v2.x, surface.v2.y, 0, 0);
+  ctx.translate(c.origin.x, c.origin.y);
+  ctx.transform(c.e1.x, c.e1.y, c.e2.x, c.e2.y, 0, 0);
   // Cell coordinates use +v upward, but image pixels use y downward.
   // Flip inside local cell space so uploaded images remain visually upright.
   ctx.translate(0, 1);
@@ -88,28 +88,34 @@ function drawGrid(offsets) {
   ctx.restore();
 }
 
+function transformedObjectPoint(objectPoint, offset) {
+  const uv = worldToBasis(objectPoint, state.surface);
+  if (!uv) return null;
+  return cellPoint(state.surface, offset, uv);
+}
+
 export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
   if (!object || object.points.length < 2) return;
-  const { ctx, surface } = state;
-  const d = displacement(surface, offset.i, offset.j);
+  const { ctx } = state;
+  const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  if (points.length < 2) return;
   ctx.save();
-  ctx.translate(d.x, d.y);
   ctx.strokeStyle = object.color;
   ctx.lineWidth = object.size;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   if (preview) ctx.globalAlpha = 0.72;
   ctx.beginPath();
-  ctx.moveTo(object.points[0].x, object.points[0].y);
-  if (object.type === "pen" && object.points.length > 2) {
-    for (let i = 1; i < object.points.length - 1; i++) {
-      const p = object.points[i], n = object.points[i + 1];
+  ctx.moveTo(points[0].x, points[0].y);
+  if (object.type === "pen" && points.length > 2) {
+    for (let i = 1; i < points.length - 1; i++) {
+      const p = points[i], n = points[i + 1];
       ctx.quadraticCurveTo(p.x, p.y, (p.x + n.x) / 2, (p.y + n.y) / 2);
     }
-    const last = object.points.at(-1);
+    const last = points.at(-1);
     ctx.lineTo(last.x, last.y);
   } else {
-    for (let i = 1; i < object.points.length; i++) ctx.lineTo(object.points[i].x, object.points[i].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   }
   ctx.stroke();
   ctx.restore();
@@ -117,17 +123,17 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
 
 function drawObjectHalo(object, offset, selected) {
   if (!object || object.points.length < 2) return;
-  const { ctx, surface } = state;
-  const d = displacement(surface, offset.i, offset.j);
+  const { ctx } = state;
+  const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  if (points.length < 2) return;
   ctx.save();
-  ctx.translate(d.x, d.y);
   ctx.strokeStyle = selected ? "rgba(30, 80, 190, 0.42)" : "rgba(30, 30, 30, 0.20)";
   ctx.lineWidth = Math.max((object.size || 1) + (selected ? 9 : 6), 8 / state.view.zoom);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.beginPath();
-  ctx.moveTo(object.points[0].x, object.points[0].y);
-  for (let i = 1; i < object.points.length; i++) ctx.lineTo(object.points[i].x, object.points[i].y);
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   ctx.stroke();
   ctx.restore();
 }
@@ -159,10 +165,11 @@ function homologyForObject(object) {
     crossings.v += countGridCrossings(basisPoints[i - 1].v, basisPoints[i].v);
   }
 
-  const first = state.surface.repeatV1 ? String(crossings.u) : "—";
-  const second = state.surface.repeatV2 ? String(crossings.v) : "—";
-  const rawFirst = state.surface.repeatV1 ? raw.u.toFixed(2) : "—";
-  const rawSecond = state.surface.repeatV2 ? raw.v.toFixed(2) : "—";
+  const topo = edgeTopology(state.surface);
+  const first = topo.repeatV1 ? String(crossings.u) : "—";
+  const second = topo.repeatV2 ? String(crossings.v) : "—";
+  const rawFirst = topo.repeatV1 ? raw.u.toFixed(2) : "—";
+  const rawSecond = topo.repeatV2 ? raw.v.toFixed(2) : "—";
   return { start, end, raw, crossings, label: `(${first}, ${second})`, rawLabel: `raw Δ: (${rawFirst}, ${rawSecond})` };
 }
 
@@ -176,9 +183,9 @@ function countGridCrossings(a, b) {
 
 function drawHomologyMarkers(object, offset) {
   const { ctx } = state;
-  const d = displacement(state.surface, offset.i, offset.j);
-  const first = add(object.points[0], d);
-  const last = add(object.points[object.points.length - 1], d);
+  const first = transformedObjectPoint(object.points[0], offset);
+  const last = transformedObjectPoint(object.points[object.points.length - 1], offset);
+  if (!first || !last) return;
   ctx.save();
   ctx.fillStyle = "rgba(255,255,255,.96)";
   ctx.strokeStyle = "rgba(30,80,190,.9)";
@@ -196,14 +203,15 @@ function drawHomologyLabel(object, offset) {
   const hom = homologyForObject(object);
   if (!hom) return;
   setScreenTransform();
-  const d = displacement(state.surface, offset.i, offset.j);
-  const anchorWorld = add(object.points[object.points.length - 1], d);
+  const anchorWorld = transformedObjectPoint(object.points[object.points.length - 1], offset);
+  if (!anchorWorld) return;
   const anchor = worldToScreen(anchorWorld, state.view, state.cssWidth, state.cssHeight);
   const { ctx } = state;
   const text = hom.label;
-  const first = state.surface.repeatV1 ? `${hom.crossings.u} × v1` : "—";
-  const second = state.surface.repeatV2 ? `${hom.crossings.v} × v2` : "—";
-  const sub = state.surface.repeatV1 || state.surface.repeatV2 ? `${first} · ${second}` : "No repeated directions";
+  const topo = edgeTopology(state.surface);
+  const first = topo.repeatV1 ? `${hom.crossings.u} × A` : "—";
+  const second = topo.repeatV2 ? `${hom.crossings.v} × B` : "—";
+  const sub = topo.repeatV1 || topo.repeatV2 ? `${first} · ${second}` : "No linked edges";
   const rawText = hom.rawLabel;
   ctx.save();
   ctx.font = "700 13px Inter, system-ui, sans-serif";
