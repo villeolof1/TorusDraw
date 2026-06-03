@@ -3,7 +3,7 @@ import { DEFAULT_SURFACE, state } from "./state.js";
 import { clamp, cloneSurface, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
 import { analyzeSurfaceQuality, qualityMessage } from "./surfaceQuality.js";
 import { requestRender, redraw } from "./render2d.js";
-import { showStatus } from "./dom.js";
+import { openPanel, showStatus } from "./dom.js";
 import { scheduleAutosave, setBackgroundFromDataUrl } from "./storage.js";
 import { updateHistoryButtons } from "./history.js";
 
@@ -53,6 +53,18 @@ function validate(surface) {
   return null;
 }
 
+function hasOrientationReversingLinks(surface = state.surface) {
+  const topo = edgeTopology(surface);
+  return Boolean((topo.repeatV1 && topo.flipV) || (topo.repeatV2 && topo.flipU));
+}
+
+function showPreviewNoticeIfOpenPreviewBecameReversed() {
+  const previewIsOpen = state.ui.preview3dPanel?.classList.contains("open");
+  if (previewIsOpen && hasOrientationReversingLinks(state.surface)) {
+    openPanel("previewWarning");
+  }
+}
+
 function clearForSurfaceChange() {
   state.objects = [];
   state.undoStack = [];
@@ -68,6 +80,7 @@ export function applySurface(next, message = "Surface updated.", confirmMessage 
     state.surface = cloneSurface(next);
     writeSurfaceControls();
     scheduleAutosave();
+    showPreviewNoticeIfOpenPreviewBecameReversed();
     showStatus("Edge links updated.");
     requestRender();
     return true;
@@ -88,6 +101,7 @@ export function applySurface(next, message = "Surface updated.", confirmMessage 
 
   writeSurfaceControls();
   scheduleAutosave();
+  showPreviewNoticeIfOpenPreviewBecameReversed();
   showStatus(message);
   requestRender();
   return true;
@@ -272,6 +286,7 @@ function applyTopologyLinks(links, message) {
   state.surface = cloneSurface({ ...state.surface, edgeLinks: links });
   writeSurfaceControls();
   scheduleAutosave();
+  showPreviewNoticeIfOpenPreviewBecameReversed();
   showStatus(message);
   requestRender();
 }

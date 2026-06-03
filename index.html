@@ -143,6 +143,31 @@
         <button id="preview3dCloseButton" class="mini-close" aria-label="Close 3D preview">×</button>
       </div>
       <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
+      <div class="surface-section preview-opacity-section">
+        <div class="surface-section-title">Model opacity</div>
+        <label class="opacity-control">
+          <input id="preview3dOpacityInput" type="range" min="20" max="100" value="100" />
+          <span id="preview3dOpacityValue">100%</span>
+        </label>
+      </div>
+    </section>
+
+
+    <section id="preview3dWarningPanel" class="panel preview-warning-panel" aria-label="3D preview accuracy notice">
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-title">3D preview notice</div>
+          <div class="panel-subtitle">Reversed edge links detected</div>
+        </div>
+        <button id="preview3dWarningCloseButton" class="mini-close" aria-label="Close 3D preview notice">×</button>
+      </div>
+      <p class="panel-copy">
+        This surface uses orientation-reversing edge identifications. The 3D preview is a coordinate-faithful visualization, but for non-orientable or self-intersecting surfaces it may not be a fully metric-accurate physical embedding.
+      </p>
+      <div class="panel-actions">
+        <button id="preview3dWarningCancelButton" class="ghost-button" type="button">Close</button>
+        <button id="preview3dWarningViewButton" class="primary-button" type="button">View anyway</button>
+      </div>
     </section>
 
     <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">

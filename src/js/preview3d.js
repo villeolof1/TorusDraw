@@ -26,6 +26,7 @@ const IMMERSION_GRID_COLOR = [0.08, 0.08, 0.08, 0.28];
 const INSPECTION_GRID_COLOR = [0.08, 0.08, 0.08, 0.40];
 const OPEN_BOUNDARY_COLOR = [0.04, 0.04, 0.04, 0.58];
 const LINKED_SEAM_COLOR = [0.08, 0.08, 0.08, 0.22];
+const DEFAULT_SURFACE_OPACITY = 1.0;
 
 export function initPreview3d() {
   canvas = state.ui.preview3dCanvas;
@@ -106,6 +107,7 @@ function fragmentShaderSource() {
     uniform bool uUseLighting;
     uniform vec4 uTexRect;
     uniform float uImageStrength;
+    uniform float uOpacity;
     varying vec3 vNormal;
     varying vec2 vUV;
     varying vec4 vColor;
@@ -125,6 +127,7 @@ function fragmentShaderSource() {
         float l = 0.93 + 0.07 * max(dot(n, light), 0.0);
         base.rgb *= l;
       }
+      base.a *= clamp(uOpacity, 0.0, 1.0);
       gl_FragColor = base;
     }
   `;
@@ -153,7 +156,8 @@ function createProgram(gl, vsSource, fsSource) {
     uUseTexture: gl.getUniformLocation(p, "uUseTexture"),
     uUseLighting: gl.getUniformLocation(p, "uUseLighting"),
     uTexRect: gl.getUniformLocation(p, "uTexRect"),
-    uImageStrength: gl.getUniformLocation(p, "uImageStrength")
+    uImageStrength: gl.getUniformLocation(p, "uImageStrength"),
+    uOpacity: gl.getUniformLocation(p, "uOpacity")
   };
 }
 
@@ -346,6 +350,7 @@ function drawMesh(data, options) {
   gl.uniform1i(program.uUseLighting, options.lighting ? 1 : 0);
   gl.uniform4fv(program.uTexRect, options.texRect || [0, 0, 1, 1]);
   gl.uniform1f(program.uImageStrength, options.imageStrength ?? 0);
+  gl.uniform1f(program.uOpacity, options.opacity ?? 1.0);
   if (options.texture) {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, options.texture);
@@ -540,20 +545,22 @@ export function drawPreview3d() {
   gl.uniform1f(program.uCameraDistance, 5.1 / Math.max(0.55, state.preview.zoom));
   gl.uniform1f(program.uFov, 0.72);
 
+  const translucentSurface = (state.preview.opacity ?? DEFAULT_SURFACE_OPACITY) < 0.999;
   gl.enable(gl.POLYGON_OFFSET_FILL);
   gl.polygonOffset(1.0, 1.0);
-  gl.depthMask(true);
+  gl.depthMask(!translucentSurface);
   drawMesh(surface, {
     useTexture: !!tex && !DEBUG_UV_COVERAGE,
     texture: tex,
     texRect: [0, 0, 1, 1],
     imageStrength: tex ? 1.0 : 0,
+    opacity: state.preview.opacity ?? DEFAULT_SURFACE_OPACITY,
     lighting: !DEBUG_UV_COVERAGE
   });
   gl.disable(gl.POLYGON_OFFSET_FILL);
 
   gl.depthFunc(gl.LEQUAL);
-  gl.depthMask(true);
+  gl.depthMask(!translucentSurface);
   drawMesh(grid, { useTexture: false, lighting: false });
 
   gl.depthMask(false);

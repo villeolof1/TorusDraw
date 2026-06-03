@@ -35,7 +35,7 @@ export const state = {
   imageFitMode: "crop",
   imageOpacity: 0.9,
 
-  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, dragging: false, last: null, enhanced: true },
+  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, opacity: 1.0, dragging: false, last: null, enhanced: true },
   renderQueued: false,
   statusTimer: null,
   autosaveTimer: null,

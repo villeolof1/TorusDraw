@@ -205,3 +205,19 @@ This version adds a geometry-quality guard and safer rendering for extreme/narro
 - Visible repeat offsets are now capped deliberately around the viewed region rather than by taking the first arbitrary offsets.
 - New strokes store canonical cell coordinates (`u`, `v`) alongside world coordinates, reducing repeated unstable basis inversion.
 - 3D paint texture rasterization uses a conservative metric scale for large strokes on skewed cells.
+
+## 3D preview notice for reversed links
+
+When a surface uses orientation-reversing edge links, opening the 3D preview now shows a short accuracy notice first. The user can choose **View anyway** to open the coordinate-faithful preview or **Close** to keep it hidden.
+
+## Latest 3D notice behavior
+
+If the 3D preview is already open and a surface/topology update introduces an orientation-reversing edge link, the preview now closes and the 3D accuracy notice opens automatically. This also applies when flipping edge arrows while the 3D preview is visible.
+
+## Latest 3D opacity update
+
+The 3D preview surface mesh now renders at about 80% opacity, giving all 3D models a subtle translucent feel while keeping grid and stroke overlays fully readable.
+
+## Latest 3D opacity slider update
+
+The 3D preview now includes a Model opacity slider inside the 3D panel. It defaults to 100%. Lowering opacity makes the surface translucent; when translucency is active, the surface avoids depth-writing so overlapping transparent walls are less likely to look abruptly cut off.

@@ -14,6 +14,43 @@ initPreview3d();
 function refreshSizeInput() { state.ui.sizeInput.value = state.tool === "erase" ? state.eraserSize : state.penSize; }
 function blurSizeInput() { state.ui.sizeInput.blur(); saveCurrentSize(); }
 
+function syncPreviewOpacityUi() {
+  if (!state.ui.preview3dOpacityInput || !state.ui.preview3dOpacityValue) return;
+  const percent = Math.round((state.preview.opacity ?? 1) * 100);
+  state.ui.preview3dOpacityInput.value = String(percent);
+  state.ui.preview3dOpacityValue.textContent = `${percent}%`;
+}
+
+function setPreviewOpacity(value) {
+  state.preview.opacity = Math.max(0.2, Math.min(1, Number(value) / 100 || 1));
+  syncPreviewOpacityUi();
+  drawPreview3d();
+}
+
+function surfaceHasReversedLinks() {
+  const links = state.surface.edgeLinks || {};
+  const v1 = links.v1;
+  const v2 = links.v2;
+  return Boolean(
+    (v1?.active && v1?.direction && v1.direction.left !== v1.direction.right) ||
+    (v2?.active && v2?.direction && v2.direction.bottom !== v2.direction.top)
+  );
+}
+
+function openPreview3dWithNoticeIfNeeded() {
+  if (surfaceHasReversedLinks()) {
+    openPanel("previewWarning");
+    return;
+  }
+  openPanel("preview");
+  drawPreview3d();
+}
+
+function viewPreview3dAnyway() {
+  openPanel("preview");
+  drawPreview3d();
+}
+
 function handleKeyDown(event) {
   const key = event.key.toLowerCase(), code = event.code, cmd = event.ctrlKey || event.metaKey;
   if (key === "enter" && document.activeElement === state.ui.sizeInput) return blurSizeInput();
@@ -57,8 +94,12 @@ function wireToolbar() {
   state.ui.clearButton.onclick = clearDrawing;
   state.ui.surfaceButton.onclick = () => openPanel("surface");
   state.ui.imageButton.onclick = () => openPanel("image");
-  state.ui.preview3dButton.onclick = () => { openPanel("preview"); drawPreview3d(); };
+  state.ui.preview3dButton.onclick = openPreview3dWithNoticeIfNeeded;
   state.ui.preview3dCloseButton.onclick = () => state.ui.preview3dPanel.classList.remove("open");
+  state.ui.preview3dWarningCloseButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
+  state.ui.preview3dWarningCancelButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
+  state.ui.preview3dWarningViewButton.onclick = viewPreview3dAnyway;
+  if (state.ui.preview3dOpacityInput) state.ui.preview3dOpacityInput.oninput = e => setPreviewOpacity(e.target.value);
   state.ui.helpButton.onclick = () => openPanel("help");
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
   state.ui.exportButton.onclick = exportPNG;
@@ -108,6 +149,6 @@ document.addEventListener("pointerdown", event => {
   if (!state.ui.sizeBlock.contains(event.target)) blurSizeInput();
 }, { capture: true });
 
-writeSurfaceControls(); syncEdgeUi(); syncImageUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
+writeSurfaceControls(); syncEdgeUi(); syncImageUi(); syncPreviewOpacityUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
 chooseTool("pen"); setEraserMode("object");
 restoreAutosave().then(() => { refreshSizeInput(); requestRender(); drawPreview3d(); });

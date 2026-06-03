@@ -7,7 +7,7 @@ export function collectDom() {
     "eraseObjectButton", "eraseRubButton", "homButton", "undoButton", "redoButton", "clearButton", "colorInput",
     "sizeInput", "sizeBlock", "surfaceButton", "imageButton", "preview3dButton", "exportButton",
     "saveProjectButton", "projectInput", "surfacePanel", "imagePanel", "imageCloseButton", "imageSummary",
-    "preview3dPanel", "preview3dCloseButton", "preview3dSummary", "helpPanel", "helpButton",
+    "preview3dPanel", "preview3dCloseButton", "preview3dSummary", "preview3dOpacityInput", "preview3dOpacityValue", "preview3dWarningPanel", "preview3dWarningCloseButton", "preview3dWarningCancelButton", "preview3dWarningViewButton", "helpPanel", "helpButton",
     "a1Input", "b1Input", "a2Input", "b2Input", "repeatV1Input", "repeatV2Input",
     "edgeDiagram", "edgeStatus", "removeV1LinkButton", "removeV2LinkButton", "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton",
     "backgroundInput", "removeImageButton", "imageCropButton", "imageStretchButton", "imageOpacityInput",
@@ -23,7 +23,7 @@ export function openPanel(name) {
   // Keep the interface split into two non-overlapping stacks:
   // right side: Image/Surface, bottom-left: Help/3D.
   const rightPanels = { image: state.ui.imagePanel, surface: state.ui.surfacePanel };
-  const leftPanels = { preview: state.ui.preview3dPanel, help: state.ui.helpPanel };
+  const leftPanels = { preview: state.ui.preview3dPanel, previewWarning: state.ui.preview3dWarningPanel, help: state.ui.helpPanel };
   const group = rightPanels[name] ? rightPanels : leftPanels[name] ? leftPanels : null;
   if (!group) return;
 
@@ -34,11 +34,11 @@ export function openPanel(name) {
 }
 
 export function closePanels() {
-  for (const panel of [state.ui.surfacePanel, state.ui.imagePanel, state.ui.preview3dPanel, state.ui.helpPanel]) panel.classList.remove("open");
+  for (const panel of [state.ui.surfacePanel, state.ui.imagePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel]) panel.classList.remove("open");
 }
 
 export function closeFloatingPanelsOnly() {
-  for (const panel of [state.ui.imagePanel, state.ui.surfacePanel, state.ui.preview3dPanel, state.ui.helpPanel]) panel.classList.remove("open");
+  for (const panel of [state.ui.imagePanel, state.ui.surfacePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel]) panel.classList.remove("open");
 }
 
 export function showStatus(message, persistent = false) {

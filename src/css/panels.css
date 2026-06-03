@@ -66,7 +66,8 @@
 }
 .shortcut-grid { display: grid; grid-template-columns: auto 1fr; gap: 8px 12px; align-items: center; color: var(--muted); font-size: 13px; }
 kbd { display: inline-block; min-width: 26px; padding: 3px 8px; border-radius: 999px; background: #fbfaf7; border: 1px solid rgba(0,0,0,.08); color: var(--ink); font: inherit; font-size: 12px; text-align: center; }
-.preview-panel {
+.preview-panel,
+.preview-warning-panel {
   left: auto;
   right: 84px;
   top: auto;
@@ -74,11 +75,12 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px; border-radius: 9
   width: 450px;
   max-height: min(62vh, 520px);
 }
+.preview-warning-panel { width: 370px; }
 #preview3dCanvas { width: 100%; height: 300px; display: block; border-radius: 16px; background: #fffdf8; border: 1px solid rgba(0,0,0,.08); touch-action: none; }
 .preview-note { margin-top: 10px; margin-bottom: 0; }
 @media (max-width: 940px) {
   .panel { right: 12px; left: 12px; top: 92px; bottom: auto; width: auto; max-height: calc(100vh - 180px); }
-  .help-panel, .preview-panel { left: 12px; right: 64px; top: auto; bottom: 108px; width: auto; max-height: calc(100vh - 220px); }
+  .help-panel, .preview-panel, .preview-warning-panel { left: 12px; right: 64px; top: auto; bottom: 108px; width: auto; max-height: calc(100vh - 220px); }
   #surfacePanel, .image-panel { left: 12px; right: 12px; top: auto; bottom: 108px; width: auto; max-height: calc(100vh - 220px); }
 }
 .edge-editor { padding-bottom: 12px; }
