@@ -20,6 +20,7 @@ export function createSurfaceDomain(surface) {
     reversedPair: classification.reversedPair,
     preservedPair: classification.preservedPair,
     worldToCell(point) {
+      if (point && Number.isFinite(point.u) && Number.isFinite(point.v)) return { u: point.u, v: point.v };
       return worldToBasis(point, surface);
     },
     cellToWorld(uv) {

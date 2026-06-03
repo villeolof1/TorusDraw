@@ -1,6 +1,7 @@
 // Surface and image settings. Typed surface edits apply only when Update is pressed.
 import { DEFAULT_SURFACE, state } from "./state.js";
-import { clamp, cloneSurface, determinant, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
+import { clamp, cloneSurface, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
+import { analyzeSurfaceQuality, qualityMessage } from "./surfaceQuality.js";
 import { requestRender, redraw } from "./render2d.js";
 import { showStatus } from "./dom.js";
 import { scheduleAutosave, setBackgroundFromDataUrl } from "./storage.js";
@@ -47,7 +48,8 @@ function validate(surface) {
   const topo = edgeTopology(surface);
   if (topo.repeatV1 && length(surface.v1) < 1) return "A links left/right, so v1 needs a non-zero displacement.";
   if (topo.repeatV2 && length(surface.v2) < 1) return "B links bottom/top, so v2 needs a non-zero displacement.";
-  if ((topo.repeatV1 || topo.repeatV2) && Math.abs(determinant(surface)) < 0.001) return "The cell vectors cannot be parallel or collapsed.";
+  const quality = analyzeSurfaceQuality(surface);
+  if (quality.invalid) return qualityMessage(quality);
   return null;
 }
 
@@ -74,6 +76,8 @@ export function applySurface(next, message = "Surface updated.", confirmMessage 
   const anchorBefore = anchorForCurrentView(state.surface);
   if (state.objects.length) clearForSurfaceChange();
   state.surface = cloneSurface(next);
+  const quality = analyzeSurfaceQuality(state.surface);
+  if (quality.extreme || quality.dense) showStatus(qualityMessage(quality));
 
   // Keep the currently viewed cell's origin anchored on screen. This makes
   // edits to a2/b2 feel like the cell grows from its visible lower-left

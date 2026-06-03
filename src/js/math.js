@@ -7,6 +7,7 @@ export const scale = (v, amount) => ({ x: v.x * amount, y: v.y * amount });
 export const dot = (a, b) => a.x * b.x + a.y * b.y;
 export const length = v => Math.hypot(v.x, v.y);
 export const mod1 = value => ((value % 1) + 1) % 1;
+const MAX_VISIBLE_OFFSETS = 4200;
 
 export function defaultEdgeLinks() {
   return {
@@ -119,10 +120,43 @@ export function visibleOffsets(state) {
   return topo.repeatV1 ? collectOffsets(range.min, range.max, 0, 0) : collectOffsets(0, 0, range.min, range.max);
 }
 
+function trimRangeAroundCenter(start, end, maxCount) {
+  const count = Math.max(0, end - start + 1);
+  if (count <= maxCount) return { start, end };
+  const center = (start + end) / 2;
+  const half = Math.floor((maxCount - 1) / 2);
+  return { start: Math.round(center) - half, end: Math.round(center) - half + maxCount - 1 };
+}
+
 export function collectOffsets(iStart, iEnd, jStart, jEnd) {
+  let width = Math.max(0, iEnd - iStart + 1);
+  let height = Math.max(0, jEnd - jStart + 1);
+  const total = width * height;
+  if (total > MAX_VISIBLE_OFFSETS) {
+    const ratio = width / Math.max(1, height);
+    const targetWidth = Math.max(1, Math.floor(Math.sqrt(MAX_VISIBLE_OFFSETS * ratio)));
+    const targetHeight = Math.max(1, Math.floor(MAX_VISIBLE_OFFSETS / targetWidth));
+    const iRange = trimRangeAroundCenter(iStart, iEnd, Math.min(width, targetWidth));
+    const jRange = trimRangeAroundCenter(jStart, jEnd, Math.min(height, targetHeight));
+    iStart = iRange.start; iEnd = iRange.end; jStart = jRange.start; jEnd = jRange.end;
+  }
   const offsets = [];
   for (let i = iStart; i <= iEnd; i++) for (let j = jStart; j <= jEnd; j++) offsets.push({ i, j });
   return offsets;
+}
+
+export function pointUv(point, surface) {
+  if (Number.isFinite(point.u) && Number.isFinite(point.v)) return { u: point.u, v: point.v };
+  return worldToBasis(point, surface);
+}
+
+export function metricDistanceBetweenUv(a, b, surface) {
+  const du = a.u - b.u;
+  const dv = a.v - b.v;
+  const g11 = dot(surface.v1, surface.v1);
+  const g12 = dot(surface.v1, surface.v2);
+  const g22 = dot(surface.v2, surface.v2);
+  return Math.sqrt(Math.max(0, du * du * g11 + 2 * du * dv * g12 + dv * dv * g22));
 }
 
 export function cloneSurface(surface) {

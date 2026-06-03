@@ -1,6 +1,6 @@
 // Pointer input: drawing, panning, line snapping, and two eraser styles.
 import { state, cloneObjects } from "./state.js";
-import { add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell } from "./math.js";
+import { add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell, worldToBasis } from "./math.js";
 import { hideAngleHint, showAngleHint } from "./dom.js";
 import { addObject, replaceAll } from "./history.js";
 import { redraw, requestRender } from "./render2d.js";
@@ -16,6 +16,8 @@ function pointerPoint(event) {
 function worldFromEvent(event) {
   const p = screenToWorld(pointerPoint(event), state.view, state.cssWidth, state.cssHeight);
   p.pressure = event.pointerType === "pen" ? clamp(event.pressure || 0.5, 0, 1) : 0.5;
+  const uv = worldToBasis(p, state.surface);
+  if (uv) { p.u = uv.u; p.v = uv.v; }
   return p;
 }
 function currentStyle() { return { color: state.ui.colorInput.value, size: Number(state.ui.sizeInput.value) || 1 }; }

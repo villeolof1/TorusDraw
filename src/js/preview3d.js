@@ -467,7 +467,10 @@ function drawBackgroundTexture(ctx, width, height) {
 function drawObjectsToTexture(ctx, domain, width, height) {
   const pixelsPerU = width;
   const pixelsPerV = height;
-  const pixelsPerWorld = 0.5 * (pixelsPerU / Math.max(1, length(state.surface.v1)) + pixelsPerV / Math.max(1, length(state.surface.v2)));
+  // Conservative metric rasterization: for extreme/skewed cells, using the
+  // larger pixels-per-world scale prevents large strokes from being underdrawn
+  // on the 3D paint texture.
+  const pixelsPerWorld = Math.max(pixelsPerU / Math.max(1, length(state.surface.v1)), pixelsPerV / Math.max(1, length(state.surface.v2)));
 
   for (const object of state.objects) {
     if (!object.points || object.points.length < 2) continue;

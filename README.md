@@ -184,3 +184,24 @@ The 3D preview now distinguishes ordinary Klein-style single-reversal gluings fr
 ## Latest 3D grid/non-orientable update
 
 The 3D preview grid now draws internal coordinate lines separately from linked seams and open boundaries, so linked surfaces no longer show duplicate boundary grids. Grid overlays now write depth before strokes, reducing the appearance of ghost grids on immersed/self-overlapping previews. Double-reversed A/B edge schemes are rendered as a closed Klein-like coordinate preview rather than as an open inspection sheet.
+
+
+## Latest 3D metric geometry update
+
+The 3D preview now uses metric-driven geometry for the surface shape itself, not only for the texture. The preview derives lengths, area, angle, perpendicular heights, and skew from `v1 = (a1, b1)` and `v2 = (a2, b2)`.
+
+- Plane remains an exact affine view of the cell.
+- Cylinder now uses an exact metric cylinder model up to global preview scale: linked direction becomes circumference, open perpendicular height becomes cylinder height, and parallelogram skew becomes a helical shift.
+- Torus, Möbius, Klein, and double-reversed previews now use metric-driven immersions: the shape responds to the true cell lengths and skew rather than fixed generic formulas.
+- The paint-texture 3D path is preserved, so the drawing content and background are still mapped from the actual fundamental cell.
+
+## Latest robustness update
+
+This version adds a geometry-quality guard and safer rendering for extreme/narrow/skewed cells.
+
+- Surface validation now uses relative cell quality, not only the raw determinant, so almost-parallel huge vectors are detected correctly.
+- Extremely narrow/skewed but still valid cells use safer rendering instead of silently breaking.
+- The main 2D grid switches to line-family rendering in dense cases, avoiding incomplete or randomly capped cell outlines.
+- Visible repeat offsets are now capped deliberately around the viewed region rather than by taking the first arbitrary offsets.
+- New strokes store canonical cell coordinates (`u`, `v`) alongside world coordinates, reducing repeated unstable basis inversion.
+- 3D paint texture rasterization uses a conservative metric scale for large strokes on skewed cells.

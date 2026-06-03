@@ -1,27 +1,64 @@
 // 3D coordinate maps for the fundamental cell.
 // Every rendered vertex is generated from one valid cell coordinate (u, v).
+// The maps below are metric-driven: v1/v2 lengths, angle, area, and skew all
+// influence the 3D shape. Exact flat embeddings are used where possible
+// (plane/cylinder); closed/non-orientable surfaces use faithful metric-based
+// immersions because perfect flat embeddings are mathematically impossible.
 import { TAU, clamp, determinant, dot, length } from "./math.js";
 
 export function createSurfaceMap(domain) {
   const metric = cellMetric(domain.surface);
-  const base = { domain, metric, type: domain.classify(), typeLabel: domain.typeLabel, representation: domain.representation, isValidUV, textureUV: (u, v) => ({ u, v }) };
+  const base = {
+    domain,
+    metric,
+    type: domain.classify(),
+    typeLabel: domain.typeLabel,
+    representation: domain.representation,
+    isValidUV,
+    textureUV: (u, v) => ({ u, v })
+  };
+
   if (base.type === "plane") return withNormal({ ...base, ...createPlaneMap(metric) });
   if (base.type === "cylinder") return withNormal({ ...base, ...createCylinderMap(domain, metric) });
   if (base.type === "torus") return withNormal({ ...base, ...createTorusMap(domain, metric) });
   if (base.type === "mobius") return withNormal({ ...base, ...createMobiusMap(domain, metric) });
   if (base.type === "klein") return withNormal({ ...base, ...createKleinMap(domain, metric) });
-  return withNormal({ ...base, ...createDoubleReversedInspectionMap(domain, metric) });
+  return withNormal({ ...base, ...createDoubleReversedMap(domain, metric) });
 }
 
 function cellMetric(surface) {
   const lenU = Math.max(1, length(surface.v1));
   const lenV = Math.max(1, length(surface.v2));
   const area = Math.max(1, Math.abs(determinant(surface)));
+  const detSign = determinant(surface) < 0 ? -1 : 1;
+
+  const cosAngle = clamp(dot(surface.v1, surface.v2) / Math.max(1, lenU * lenV), -0.999, 0.999);
+  const angle = Math.acos(cosAngle);
   const heightVOverU = area / lenU;
   const heightUOverV = area / lenV;
-  const skewVAlongU = clamp(dot(surface.v2, surface.v1) / Math.max(1, lenU * lenU), -1.15, 1.15);
-  const skewUAlongV = clamp(dot(surface.v1, surface.v2) / Math.max(1, lenV * lenV), -1.15, 1.15);
-  return { surface, lenU, lenV, area, heightVOverU, heightUOverV, skewVAlongU, skewUAlongV };
+
+  // If v is used after u, this is how much a one-cell v step advances around u.
+  const skewVAlongU = clamp(dot(surface.v2, surface.v1) / Math.max(1, lenU * lenU), -2.5, 2.5);
+  // If u is used after v, this is how much a one-cell u step advances around v.
+  const skewUAlongV = clamp(dot(surface.v1, surface.v2) / Math.max(1, lenV * lenV), -2.5, 2.5);
+
+  const diagonal = Math.max(1, Math.hypot(lenU, lenV));
+  const globalScale = 2.35 / diagonal;
+
+  return {
+    surface,
+    lenU,
+    lenV,
+    area,
+    detSign,
+    cosAngle,
+    angle,
+    heightVOverU,
+    heightUOverV,
+    skewVAlongU,
+    skewUAlongV,
+    globalScale
+  };
 }
 
 function isValidUV(u, v) {
@@ -38,8 +75,9 @@ function createPlaneMap(metric) {
   ];
   const center = average3(pts);
   const maxDistance = Math.max(1, ...pts.map(p => len3(sub3(p, center))));
-  const s = 1.8 / maxDistance;
+  const s = 1.9 / maxDistance;
   return {
+    metricKind: "exact-affine-plane",
     point(u, v) {
       return [
         ((surface.v1.x * u + surface.v2.x * v) - center[0]) * s,
@@ -53,98 +91,134 @@ function createPlaneMap(metric) {
 
 function createCylinderMap(domain, metric) {
   const repeatU = domain.topology.repeatV1;
-  const repeatLength = repeatU ? metric.lenU : metric.lenV;
-  const openLength = repeatU ? metric.heightVOverU : metric.heightUOverV;
-  const radius = 0.82;
-  const height = clamp((openLength / repeatLength) * 4.2, 1.05, 3.05);
-  const skew = repeatU ? metric.skewVAlongU : metric.skewUAlongV;
+  const linkedLength = repeatU ? metric.lenU : metric.lenV;
+  const openHeight = repeatU ? metric.heightVOverU : metric.heightUOverV;
+  const shear = repeatU ? metric.skewVAlongU : metric.skewUAlongV;
+
+  // Exact cylinder metric up to one global preview scale:
+  // circumference = linkedLength * s, height = open perpendicular height * s.
+  const fit = 2.7 / Math.max(openHeight, linkedLength / Math.PI, 1);
+  const s = clamp(fit, 0.0012, 0.012);
+  const radius = (linkedLength * s) / TAU;
+  const height = openHeight * s;
+
   return {
     repeatU,
+    metricKind: "exact-cylinder",
     point(u, v) {
       const loop = repeatU ? u : v;
       const open = repeatU ? v : u;
-      const theta = TAU * (loop + skew * (open - 0.5));
+      const theta = TAU * (loop + shear * open);
       const h = (open - 0.5) * height;
       const x = radius * Math.cos(theta);
       const z = radius * Math.sin(theta);
       return repeatU ? [x, h, z] : [h, x, z];
     },
-    worldToModelScale: (TAU * radius / repeatLength + height / Math.max(1, openLength)) * 0.5
+    worldToModelScale: s
   };
 }
 
 function createTorusMap(domain, metric) {
-  const R = 1.24;
-  const r = clamp((metric.heightVOverU / metric.lenU) * 1.05, 0.18, 0.74);
+  // Metric-driven torus immersion. A perfectly flat torus cannot be embedded
+  // in ordinary 3D, so R/r are chosen from the two fundamental lengths and the
+  // skew is applied as a twist of the major-loop coordinate.
+  const lenMajor = metric.lenU;
+  const lenTube = metric.heightVOverU;
+  const fit = 1.62 / Math.max((lenMajor / TAU) + (lenTube / TAU), 1);
+  const s = clamp(fit, 0.00085, 0.010);
+  const R = Math.max(0.54, (lenMajor * s) / TAU);
+  const r = clamp((lenTube * s) / TAU, 0.11, Math.max(0.12, R * 0.62));
   const skew = metric.skewVAlongU;
+
   return {
+    metricKind: "metric-torus-immersion",
     point(u, v) {
       const theta = TAU * (u + skew * v);
       const phi = TAU * v;
       const tube = R + r * Math.cos(phi);
       return [tube * Math.cos(theta), r * Math.sin(phi), tube * Math.sin(theta)];
     },
-    worldToModelScale: (TAU * R / metric.lenU + TAU * r / metric.lenV) * 0.5
+    worldToModelScale: s
   };
 }
 
 function createMobiusMap(domain, metric) {
   const loopU = domain.topology.repeatV1;
   const repeatLength = loopU ? metric.lenU : metric.lenV;
-  const openLength = loopU ? metric.heightVOverU : metric.heightUOverV;
-  const radius = 0.95;
-  const stripWidth = clamp((openLength / repeatLength) * 1.45, 0.30, 0.95);
+  const openHeight = loopU ? metric.heightVOverU : metric.heightUOverV;
+  const shear = loopU ? metric.skewVAlongU : metric.skewUAlongV;
+
+  // A Möbius strip has no exact rectangular flat embedding in this simple
+  // analytic form, but these dimensions now come from the true metric.
+  const fit = 2.9 / Math.max(repeatLength / Math.PI + openHeight, 1);
+  const s = clamp(fit, 0.0010, 0.012);
+  const radius = Math.max(0.45, (repeatLength * s) / TAU);
+  const stripWidth = clamp(openHeight * s, 0.18, radius * 1.16);
+
   return {
     loopU,
+    metricKind: "metric-mobius-immersion",
     point(u, v) {
       const loop = loopU ? u : v;
-      const strip = ((loopU ? v : u) - 0.5) * stripWidth;
-      const theta = TAU * loop;
+      const stripCoord = loopU ? v : u;
+      const strip = (stripCoord - 0.5) * stripWidth;
+      const theta = TAU * (loop + shear * stripCoord);
       const radial = radius + strip * Math.cos(theta / 2);
       const x = radial * Math.cos(theta);
       const z = radial * Math.sin(theta);
       const y = strip * Math.sin(theta / 2);
       return loopU ? [x, y, z] : [y, x, z];
     },
-    worldToModelScale: (TAU * radius / repeatLength + stripWidth / Math.max(1, openLength)) * 0.5
+    worldToModelScale: s
   };
 }
 
 function createKleinMap(domain, metric) {
   const reversedV1 = domain.reversedPair === "v1";
-  const R = 1.06;
-  const r = clamp((metric.heightVOverU / metric.lenU) * 0.75, 0.24, 0.48);
-  const scale = (TAU * R / metric.lenU + TAU * r / metric.lenV) * 0.5;
+
+  // Choose coordinate roles from the actual gluing. The preserved linked pair
+  // forms the main loop; the reversed pair forms the non-orientable tube.
+  const mainLength = reversedV1 ? metric.lenV : metric.lenU;
+  const tubeLength = reversedV1 ? metric.heightUOverV : metric.heightVOverU;
+  const shear = reversedV1 ? metric.skewUAlongV : metric.skewVAlongU;
+  const fit = 1.55 / Math.max(mainLength / TAU + tubeLength / TAU, 1);
+  const s = clamp(fit, 0.00085, 0.010);
+  const R = Math.max(0.50, (mainLength * s) / TAU);
+  const r = clamp((tubeLength * s) / TAU, 0.12, Math.max(0.14, R * 0.50));
+
   return {
     representation: "immersion",
+    metricKind: "metric-klein-immersion",
     point(u, v) {
-      // A stable Klein-bottle immersion. The coordinate roles are explicit:
-      // if left/right is the reversed pair, v is the main loop and u is tube;
-      // if top/bottom is the reversed pair, u is the main loop and v is tube.
-      const a = reversedV1 ? v : u;
-      const b = reversedV1 ? u : v;
-      const theta = TAU * a;
-      const phi = TAU * b;
+      const main = reversedV1 ? v : u;
+      const tubeCoord = reversedV1 ? u : v;
+      const theta = TAU * (main + shear * tubeCoord);
+      const phi = TAU * tubeCoord;
       const tube = Math.cos(theta / 2) * Math.sin(phi) - Math.sin(theta / 2) * Math.sin(2 * phi);
       const x = (R + r * tube) * Math.cos(theta);
       const z = (R + r * tube) * Math.sin(theta);
       const y = r * (Math.sin(theta / 2) * Math.sin(phi) + Math.cos(theta / 2) * Math.sin(2 * phi));
       return [x, y, z];
     },
-    worldToModelScale: scale
+    worldToModelScale: s
   };
 }
 
-function createDoubleReversedInspectionMap(domain, metric) {
-  // Both edge pairs reversed form a closed non-orientable gluing. We render it
-  // as a stable closed Klein-like immersion rather than as an open inspection
-  // sheet, so the preview still feels like a real closed surface while every
-  // vertex remains generated from the fundamental cell coordinates.
-  const R = 1.08;
-  const r = clamp((metric.heightVOverU / metric.lenU) * 0.72, 0.24, 0.46);
-  const skew = metric.skewVAlongU * 0.35;
+function createDoubleReversedMap(domain, metric) {
+  // Both linked directions reverse. We use the same coordinate-complete,
+  // metric-driven Klein-like immersion, but both cell directions affect the
+  // closed geometry instead of falling back to a generic shape.
+  const lenMain = metric.lenU;
+  const lenTube = metric.heightVOverU;
+  const fit = 1.55 / Math.max(lenMain / TAU + lenTube / TAU, 1);
+  const s = clamp(fit, 0.00085, 0.010);
+  const R = Math.max(0.50, (lenMain * s) / TAU);
+  const r = clamp((lenTube * s) / TAU, 0.12, Math.max(0.14, R * 0.50));
+  const skew = metric.skewVAlongU;
+
   return {
     representation: "immersion",
+    metricKind: "double-reversed-metric-immersion",
     point(u, v) {
       const theta = TAU * (u + skew * v);
       const phi = TAU * v;
@@ -154,7 +228,7 @@ function createDoubleReversedInspectionMap(domain, metric) {
       const y = r * (Math.sin(theta / 2) * Math.sin(phi) + Math.cos(theta / 2) * Math.sin(2 * phi));
       return [x, y, z];
     },
-    worldToModelScale: (TAU * R / metric.lenU + TAU * r / metric.lenV) * 0.5
+    worldToModelScale: s
   };
 }
 
@@ -163,10 +237,17 @@ function withNormal(map) {
     ...map,
     normal(u, v) {
       const e = 0.001;
-      const u0 = clamp(u - e, 0, 1);
-      const u1 = clamp(u + e, 0, 1);
-      const v0 = clamp(v - e, 0, 1);
-      const v1 = clamp(v + e, 0, 1);
+      // Closed directions should sample through the map instead of collapsing
+      // the derivative to zero at the edge.
+      const uw0 = wrapIfClosed(u - e, map.domain.topology.repeatV1);
+      const uw1 = wrapIfClosed(u + e, map.domain.topology.repeatV1);
+      const vw0 = wrapIfClosed(v - e, map.domain.topology.repeatV2);
+      const vw1 = wrapIfClosed(v + e, map.domain.topology.repeatV2);
+      const u0 = map.domain.topology.repeatV1 ? uw0 : clamp(u - e, 0, 1);
+      const u1 = map.domain.topology.repeatV1 ? uw1 : clamp(u + e, 0, 1);
+      const v0 = map.domain.topology.repeatV2 ? vw0 : clamp(v - e, 0, 1);
+      const v1 = map.domain.topology.repeatV2 ? vw1 : clamp(v + e, 0, 1);
+
       const pu0 = map.point(u0, v);
       const pu1 = map.point(u1, v);
       const pv0 = map.point(u, v0);
@@ -184,6 +265,11 @@ function withNormal(map) {
       return n;
     }
   };
+}
+
+function wrapIfClosed(value, closed) {
+  if (!closed) return value;
+  return ((value % 1) + 1) % 1;
 }
 
 function average3(points) {

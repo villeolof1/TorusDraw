@@ -1,6 +1,7 @@
 // Main canvas renderer. The canvas is only a view; objects are stored separately.
 import { state } from "./state.js";
-import { add, cellPoint, cellTransform, displacement, edgeTopology, length, scale, visibleOffsets, worldToBaseFromCell, worldToBasis, worldToScreen } from "./math.js";
+import { add, cellPoint, cellTransform, displacement, edgeTopology, length, pointUv, scale, visibleOffsets, viewportWorldCorners, worldToBasis, worldToScreen } from "./math.js";
+import { analyzeSurfaceQuality } from "./surfaceQuality.js";
 
 export function requestRender() {
   if (state.renderQueued) return;
@@ -78,8 +79,12 @@ function drawCellImage(offset) {
   ctx.restore();
 }
 
-function drawGrid(offsets) {
+function drawGrid(offsets, denseMode = false) {
   if (state.hideGrid) return;
+  if (denseMode && edgeTopology(state.surface).repeatV1 && edgeTopology(state.surface).repeatV2) {
+    drawGridLineFamilies();
+    return;
+  }
   const { ctx, view, background } = state;
   ctx.save();
   ctx.strokeStyle = background.image ? "rgba(0,0,0,.24)" : "rgba(0,0,0,.12)";
@@ -88,8 +93,41 @@ function drawGrid(offsets) {
   ctx.restore();
 }
 
+function drawGridLineFamilies() {
+  const { ctx, surface, view, background } = state;
+  const corners = viewportWorldCorners(view, state.cssWidth, state.cssHeight);
+  const basis = corners.map(point => worldToBasis(point, surface)).filter(Boolean);
+  if (basis.length < 4) return;
+  const uMin = Math.floor(Math.min(...basis.map(p => p.u))) - 2;
+  const uMax = Math.ceil(Math.max(...basis.map(p => p.u))) + 2;
+  const vMin = Math.floor(Math.min(...basis.map(p => p.v))) - 2;
+  const vMax = Math.ceil(Math.max(...basis.map(p => p.v))) + 2;
+  const uCount = Math.max(1, uMax - uMin + 1);
+  const vCount = Math.max(1, vMax - vMin + 1);
+  const strideU = Math.max(1, Math.ceil(uCount / 520));
+  const strideV = Math.max(1, Math.ceil(vCount / 520));
+  ctx.save();
+  ctx.strokeStyle = background.image ? "rgba(0,0,0,.24)" : "rgba(0,0,0,.12)";
+  ctx.lineWidth = Math.max(1 / view.zoom, 0.45);
+  ctx.beginPath();
+  for (let i = uMin; i <= uMax; i += strideU) {
+    const from = displacement(surface, i, vMin);
+    const to = displacement(surface, i, vMax);
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+  }
+  for (let j = vMin; j <= vMax; j += strideV) {
+    const from = displacement(surface, uMin, j);
+    const to = displacement(surface, uMax, j);
+    ctx.moveTo(from.x, from.y);
+    ctx.lineTo(to.x, to.y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
 function transformedObjectPoint(objectPoint, offset) {
-  const uv = worldToBasis(objectPoint, state.surface);
+  const uv = pointUv(objectPoint, state.surface);
   if (!uv) return null;
   return cellPoint(state.surface, offset, uv);
 }
@@ -280,9 +318,11 @@ function drawArrow(from, to, label) {
 export function redraw(preview = state.previewObject) {
   clearScreen();
   setWorldTransform();
-  const offsets = visibleOffsets(state).slice(0, 2600);
+  const quality = analyzeSurfaceQuality(state.surface);
+  const offsets = visibleOffsets(state);
+  const denseMode = quality.dense || offsets.length >= 4000;
   for (const offset of offsets) drawCellImage(offset);
-  drawGrid(offsets);
+  drawGrid(offsets, denseMode);
   for (const object of state.objects) for (const offset of offsets) drawObject(object, offset);
   drawHomologyDirectionArrows();
   drawHomologyOverlay(offsets);
