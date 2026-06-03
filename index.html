@@ -4,7 +4,9 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Torus Drawing Pane</title>
-  <link rel="stylesheet" href="styles.css" />
+  <link rel="stylesheet" href="src/css/base.css" />
+  <link rel="stylesheet" href="src/css/toolbar.css" />
+  <link rel="stylesheet" href="src/css/panels.css" />
 </head>
 <body>
   <main id="app">
@@ -12,14 +14,15 @@
 
     <section id="toolbar" aria-label="Drawing controls">
       <div class="tool-group">
-        <button id="penButton" class="tool-button active" title="Pen — shortcut 1 or P">Pen</button>
-        <button id="lineButton" class="tool-button" title="Line — shortcut 2 or L. Shift snaps to 15° increments; Alt/Option draws from center.">Line</button>
-        <button id="eraseButton" class="tool-button" title="Erase — shortcut 4 or E">Erase</button>
+        <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
+        <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
+        <button id="eraseButton" class="tool-button" title="Erase — 3 or E. Shift+3 toggles eraser mode. Shift+E also works.">Erase</button>
         <div id="eraserOptions" class="tool-group eraser-options" hidden>
           <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
           <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
         </div>
-        <button id="panButton" class="tool-button" title="Pan / move view — shortcut 3 or V. Hold Space for temporary pan.">Pan</button>
+        <button id="panButton" class="tool-button" title="Pan — 4 or V. Hold Space for temporary pan.">Pan</button>
+        <button id="homButton" class="tool-button" title="Homology — 5. Click a stroke to inspect its cell displacement.">Hom</button>
       </div>
 
       <div class="divider"></div>
@@ -27,7 +30,7 @@
       <div class="tool-group compact-actions">
         <button id="undoButton" class="ghost-button" title="Undo — Ctrl/Cmd+Z">Undo</button>
         <button id="redoButton" class="ghost-button" title="Redo — Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo</button>
-        <button id="clearButton" class="ghost-button danger" title="Clear drawing — shortcut C">Clear</button>
+        <button id="clearButton" class="ghost-button danger" title="Clear — C">Clear</button>
       </div>
 
       <div class="divider"></div>
@@ -37,15 +40,15 @@
         <input id="colorInput" type="color" value="#111111" />
       </label>
 
-      <label class="control-label small-input">
+      <label id="sizeBlock" class="control-label small-input">
         <span>Size</span>
         <input id="sizeInput" type="number" min="1" max="300" value="4" />
       </label>
 
       <div class="divider"></div>
 
-      <button id="geometryButton" class="ghost-button" title="Edit displacement vectors — shortcut G">Surface</button>
-      <button id="imageButton" class="ghost-button" title="Image settings — shortcut I">Image</button>
+      <button id="surfaceButton" class="ghost-button" title="Surface settings — G">Surface</button>
+      <button id="imageButton" class="ghost-button" title="Image settings — I">Image</button>
 
       <div class="divider"></div>
 
@@ -57,10 +60,10 @@
       </label>
     </section>
 
-    <section id="geometryPanel" class="panel" aria-label="Displacement vector controls">
+    <section id="surfacePanel" class="panel" aria-label="Surface controls">
       <div class="panel-title">Surface</div>
       <p class="panel-copy">
-        Copies use v1 = (a1, b1) and v2 = (a2, b2). Both repeats on gives a torus; one repeat gives a cylinder; both off gives a normal plane. Typed changes apply only when you click Update surface.
+        Copies use v1 = (a1, b1) and v2 = (a2, b2). Positive a goes right; positive b goes up. Typed changes apply only when you click Update surface.
       </p>
       <div class="vector-grid">
         <label>a1 <input id="a1Input" type="number" value="600" step="10" /></label>
@@ -68,15 +71,13 @@
         <label>a2 <input id="a2Input" type="number" value="0" step="10" /></label>
         <label>b2 <input id="b2Input" type="number" value="420" step="10" /></label>
       </div>
-      <div class="repeat-toggles panel-toggles" title="Both on = torus. One on = cylinder. Both off = normal plane. Repeat changes apply only after Update surface.">
+      <div class="panel-toggles">
         <label><input id="repeatV1Input" type="checkbox" checked /> Repeat v1</label>
         <label><input id="repeatV2Input" type="checkbox" checked /> Repeat v2</label>
         <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
       </div>
-
-
       <div class="panel-actions">
-        <button id="resetGeometryButton" class="ghost-button">Reset surface</button>
+        <button id="resetSurfaceButton" class="ghost-button">Reset surface</button>
         <button id="centerViewButton" class="ghost-button">Center</button>
         <button id="fitCellButton" class="ghost-button">Fit cell</button>
         <button id="updateSurfaceButton" class="primary-button">Update surface</button>
@@ -97,7 +98,7 @@
           Upload / replace image
           <input id="backgroundInput" type="file" accept="image/*" />
         </label>
-        <button id="removeBackgroundButton" class="ghost-button panel-wide-button" type="button">Remove image</button>
+        <button id="removeImageButton" class="ghost-button panel-wide-button" type="button">Remove image</button>
       </div>
 
       <div class="surface-section">
@@ -105,86 +106,78 @@
         <div class="segmented-control" aria-label="Image fit mode">
           <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
           <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
-          <button id="imageManualButton" class="mini-toggle" type="button" title="Place the image exactly inside the cell">Manual</button>
         </div>
       </div>
 
       <div class="surface-section">
         <div class="surface-section-title">Opacity</div>
         <label class="opacity-control">
-          <input id="imageOpacityInput" type="range" min="15" max="100" value="76" />
-          <span id="imageOpacityValue">76%</span>
+          <input id="imageOpacityInput" type="range" min="15" max="100" value="90" />
+          <span id="opacityValue">90%</span>
         </label>
       </div>
 
       <div class="surface-section">
         <button id="fitSurfaceToImageButton" class="ghost-button panel-wide-button" type="button">Fit surface to image</button>
-        <button id="editImagePlacementButton" class="ghost-button panel-wide-button" type="button">Edit image placement</button>
       </div>
     </section>
 
-    <section id="placementPanel" class="panel placement-panel" aria-label="Image placement controls">
-      <div class="panel-title">Image placement</div>
-      <p class="panel-copy">Drag the image to move it. Drag the corner handle to resize. Anything outside the cell is cropped.</p>
-      <label class="placement-check"><input id="imageKeepAspectInput" type="checkbox" checked /> Keep proportions</label>
-      <div class="panel-actions">
-        <button id="cancelPlacementButton" class="ghost-button" type="button">Cancel</button>
-        <button id="donePlacementButton" class="primary-button" type="button">Done</button>
-      </div>
-    </section>
-
-    <aside id="zoomRail" aria-label="Zoom controls">
-      <button id="zoomInButton" title="Zoom in — shortcut +">+</button>
-      <input id="zoomSlider" type="range" min="0" max="100" value="48" orient="vertical" />
-      <button id="zoomOutButton" title="Zoom out — shortcut −">−</button>
-    </aside>
-
-    <button id="helpButton" class="floating-help-button" aria-label="Show shortcuts" title="Show shortcuts">?</button>
-    <button id="shapeButton" class="floating-shape-button" aria-label="Show 3D surface preview" title="Show 3D surface preview">3D</button>
-
-    <section id="shapePanel" class="panel shape-panel" aria-label="3D surface preview">
+    <section id="preview3dPanel" class="panel preview-panel" aria-label="3D surface preview">
       <div class="panel-title-row">
         <div>
           <div class="panel-title">Surface preview</div>
-          <div id="shapeSummary" class="panel-subtitle">Drag to rotate · wheel to zoom</div>
+          <div id="preview3dSummary" class="panel-subtitle">Drag to rotate · wheel to zoom</div>
         </div>
-        <button id="shapeCloseButton" class="mini-close" aria-label="Close 3D preview">×</button>
+        <button id="preview3dCloseButton" class="mini-close" aria-label="Close 3D preview">×</button>
       </div>
-      <canvas id="shapeCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
-      <div class="shape-caption">This shows the current surface, grid, and drawing projected onto the 3D model.</div>
+      <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
+      <label class="preview-visibility-toggle">
+        <input id="previewEnhancedInput" type="checkbox" checked />
+        <span>Enhanced visibility</span>
+      </label>
+      <div class="preview-note">Enhanced visibility makes preview strokes easier to see. Position, wrapping, and occlusion stay accurate, but stroke thickness is visually enlarged.</div>
     </section>
 
     <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">
       <div class="panel-title">Shortcuts</div>
       <div class="shortcut-grid">
-        <div><kbd>1</kbd> or <kbd>P</kbd></div><div>Pen</div>
-        <div><kbd>2</kbd> or <kbd>L</kbd></div><div>Line</div>
-        <div><kbd>4</kbd> or <kbd>E</kbd></div><div>Erase</div>
-        <div><kbd>Shift + E</kbd></div><div>Toggle eraser mode</div>
-        <div><kbd>3</kbd> or <kbd>V</kbd></div><div>Pan</div>
-        <div><kbd>C</kbd></div><div>Clear drawing</div>
-        <div><kbd>Shift</kbd></div><div>Line snap, 15° steps</div>
+        <div><kbd>1</kbd> / <kbd>P</kbd></div><div>Pen</div>
+        <div><kbd>2</kbd> / <kbd>L</kbd></div><div>Line</div>
+        <div><kbd>3</kbd> / <kbd>E</kbd></div><div>Erase</div>
+        <div><kbd>Shift+3</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
+        <div><kbd>4</kbd> / <kbd>V</kbd></div><div>Pan</div>
+        <div><kbd>5</kbd></div><div>Homology tool</div>
+        <div><kbd>Shift</kbd></div><div>Line snap, 15°</div>
         <div><kbd>Alt</kbd></div><div>Line from center</div>
         <div><kbd>Space</kbd></div><div>Temporary pan</div>
-        <div><kbd>+</kbd> / <kbd>-</kbd></div><div>Zoom in / out</div>
-        <div><kbd>0</kbd></div><div>Center view</div>
-        <div><kbd>F</kbd></div><div>Fit one cell</div>
+        <div><kbd>C</kbd></div><div>Clear</div>
+        <div><kbd>Shift+C</kbd></div><div>Full reset</div>
+        <div><kbd>F</kbd></div><div>Fit cell</div>
         <div><kbd>3D</kbd></div><div>Surface preview button</div>
-        <div><kbd>G</kbd></div><div>Toggle surface panel</div>
+        <div><kbd>G</kbd></div><div>Surface panel</div>
         <div><kbd>U</kbd></div><div>Update surface</div>
         <div><kbd>H</kbd></div><div>Toggle grid</div>
         <div><kbd>I</kbd></div><div>Image panel</div>
-        <div><kbd>Ctrl/Cmd + S</kbd></div><div>Save project</div>
+        <div><kbd>?</kbd></div><div>Help</div>
+        <div><kbd>Ctrl/Cmd+S</kbd></div><div>Save project</div>
         <div><kbd>Esc</kbd></div><div>Close panels</div>
         <div><kbd>Ctrl/Cmd + Z</kbd></div><div>Undo</div>
         <div><kbd>Ctrl/Cmd + Shift + Z</kbd></div><div>Redo</div>
       </div>
     </section>
 
+    <aside id="zoomRail" aria-label="Zoom controls">
+      <button id="zoomInButton" title="Zoom in">+</button>
+      <input id="zoomSlider" type="range" min="0" max="100" value="48" orient="vertical" />
+      <button id="zoomOutButton" title="Zoom out">−</button>
+    </aside>
+
+    <button id="helpButton" class="floating-help-button" aria-label="Show shortcuts" title="Show shortcuts">?</button>
+    <button id="preview3dButton" class="floating-shape-button" aria-label="Show 3D surface preview" title="Show 3D surface preview">3D</button>
     <div id="angleHint" aria-hidden="true"></div>
     <div id="status" aria-live="polite"></div>
   </main>
 
-  <script src="drawing.js"></script>
+  <script type="module" src="src/js/main.js"></script>
 </body>
 </html>

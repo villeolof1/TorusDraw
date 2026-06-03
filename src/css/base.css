@@ -1,0 +1,56 @@
+/* Shared visual foundation: one calm page, one full-screen canvas. */
+* { box-sizing: border-box; }
+:root {
+  --paper: #fffdf8;
+  --ink: #1f1f1f;
+  --muted: #6f6a60;
+  --glass: rgba(255, 255, 255, 0.88);
+  --shadow: 0 18px 60px rgba(0, 0, 0, 0.14), 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+body {
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  background: #f4f1e9;
+  color: var(--ink);
+}
+#app { position: relative; width: 100vw; height: 100vh; overflow: hidden; }
+#drawingCanvas {
+  display: block;
+  width: 100vw;
+  height: 100vh;
+  background: var(--paper);
+  cursor: crosshair;
+  touch-action: none;
+}
+#drawingCanvas.panning { cursor: grab; }
+#drawingCanvas.panning.active-pan { cursor: grabbing; }
+button, input { font: inherit; }
+button, .upload-button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 13px;
+  background: transparent;
+  color: #333;
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease, transform 140ms ease, opacity 140ms ease, box-shadow 140ms ease;
+  user-select: none;
+}
+button:hover:not(:disabled), .upload-button:hover { background: #f0eee8; transform: translateY(-1px); }
+button:disabled { opacity: 0.35; cursor: default; }
+.primary-button { background: var(--ink); color: white; box-shadow: 0 5px 16px rgba(0,0,0,.18); }
+.ghost-button.danger:hover { background: #f3e8e5; }
+.upload-button { display: inline-flex; align-items: center; justify-content: center; }
+.upload-button input { display: none; }
+input[type="number"] {
+  height: 34px;
+  border: 1px solid rgba(0,0,0,.12);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #fbfaf7;
+  color: #222;
+  outline: none;
+  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
+}
+input[type="number"]:focus { background: white; border-color: rgba(0,0,0,.25); box-shadow: 0 0 0 4px rgba(0,0,0,.06); }
+input[type="color"] { width: 34px; height: 34px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+#drawingCanvas.homing { cursor: help; }

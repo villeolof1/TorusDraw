@@ -1,149 +1,152 @@
 # Torus Drawing Pane
 
-A minimalist object-based web drawing app with infinite pan, bounded zoom, customizable torus/cylinder repeats, subtle pen polish, erasing, image-in-cell backgrounds, project save/load, autosave, PNG export, and a lightweight 3D surface preview.
+A minimalist object-based drawing app for drawing on a configurable repeated surface.
+
+The app supports:
+
+- Pen, line, pan, and two eraser modes.
+- One shared Size input that remembers pen/line size and eraser size separately.
+- Default eraser size: **20**.
+- Infinite panning and bounded zoom.
+- Custom surface vectors `v1 = (a1, b1)` and `v2 = (a2, b2)`, where positive `a` goes right and positive `b` goes up.
+- Torus, cylinder, or plane behavior through Repeat v1 / Repeat v2.
+- Image backgrounds inside each cell, with Crop or Stretch fitting.
+- Image opacity, defaulting to **90%**.
+- Prompt to fit the surface dimensions to the image when uploading.
+- PNG export, editable project save/load, autosave, undo/redo.
+- A visible **3D** preview button showing the surface, drawing, and uploaded image mapped onto the model.
+- A **Hom** tool for selecting a stroke and reading its homology displacement `(m, n)`.
 
 ## Run
 
-The app is dependency-free at runtime. You can open `index.html` directly in a browser.
-
-For a local dev server:
+Use a local server because the project is split into clean JavaScript modules.
 
 ```bash
 npm install
 npm run start
 ```
 
-Then open the local URL shown by Vite, usually:
+Then open the URL shown by Vite, usually:
 
 ```text
 http://localhost:5173
 ```
 
-## Core drawing
+## Project structure
 
-- Draw freehand pen strokes and straight lines.
-- Use a subtle pressure-aware pen when a stylus reports pressure.
-- Erase in two ways, with the Object/Rub choice shown next to the Erase button:
-  - **Object** eraser removes whole strokes/lines when touched.
-  - **Rub** eraser cuts through strokes more like a normal eraser.
-- The single Size input is context-sensitive:
-  - Pen/Line remember their drawing size.
-  - Erase remembers its eraser size separately.
-- Pan forever in any direction.
-- Zoom with the vertical slider, +/- buttons, or mouse/trackpad wheel.
-- Save/load editable project files.
-- Export the current viewport as PNG.
-- Autosave to the browser and restore on reload.
-- Undo, redo, and clear.
+The project deliberately avoids numbered filenames and tiny one-purpose folders. Files are grouped by responsibility:
+
+```text
+index.html
+package.json
+README.md
+src/css/base.css       page and shared element styling
+src/css/toolbar.css    toolbar, zoom rail, status, shortcuts button
+src/css/panels.css     floating panels and panel-specific controls
+src/js/state.js        central app state and object cloning
+src/js/math.js         vector math, cell coordinates, repeat offsets
+src/js/dom.js          DOM lookup, panels, status, angle hint
+src/js/render2d.js     main 2D canvas drawing
+src/js/drawing.js      pointer input, tools, line snapping, eraser
+src/js/history.js      undo/redo and clear history
+src/js/surface.js      surface settings, image settings, export, zoom
+src/js/storage.js      save/load project and browser autosave
+src/js/preview3d.js    3D surface preview and drawing projection
+src/js/main.js         app startup and event wiring
+```
 
 ## Surface model
 
-The surface uses two displacement vectors:
+The Surface panel uses mathematical direction: positive `a` means right, and positive `b` means up. Internally the canvas still uses browser coordinates, but users never need to think about that conversion.
 
-- `v1 = (a1, b1)`
-- `v2 = (a2, b2)`
+The base cell is the parallelogram spanned by:
 
-From the Surface panel you can choose which vectors repeat:
+```text
+v1 = (a1, b1)
+v2 = (a2, b2)
+```
+
+Each repeated copy is shifted by an integer combination of those vectors:
+
+```text
+i * v1 + j * v2
+```
 
 - Repeat v1 + Repeat v2 = torus.
 - Repeat v1 only = cylinder along v1.
 - Repeat v2 only = cylinder along v2.
-- Neither = ordinary non-repeating drawing plane.
+- Neither repeat = ordinary plane.
 
-The default surface is a clean rectangle:
+Typed surface changes do not apply while typing. Click **Update** to apply them. Updating keeps the origin/anchor fixed and does not automatically recenter the view; use **Center** or **Fit cell** when you explicitly want the camera to move. **Reset surface** applies immediately and asks before clearing an existing drawing if necessary.
 
-- `v1 = (600, 0)`
-- `v2 = (0, 420)`
+## 3D preview accuracy
 
-Surface settings do **not** update while typing. Edit the numbers or repeat checkboxes, then click **Update surface**.
+The 3D preview maps the drawing through the same surface coordinates used by the 2D canvas:
 
-**Reset surface** immediately applies the default rectangular surface. If an existing drawing would be cleared, the app asks first.
+1. A drawing point is converted into `(u, v)` coordinates relative to `v1` and `v2`.
+2. Repeated coordinates wrap according to the active topology.
+3. The point is placed on the 3D torus, cylinder, or plane preview.
 
-## Images
+This makes the preview topologically accurate: wrapping direction, cylinder direction, skewed/parallelogram coordinates, background texture placement, and drawing placement all follow the active surface parameters. The 3D model is a readable visual embedding of that topology, not a claim that every possible flat torus lattice can be isometrically embedded in ordinary 3D space.
 
-Click **Image** to open the Image panel. Uploaded images are part of the repeated surface, not fixed wallpaper. Each cell gets its own clipped copy of the image.
+The **Enhanced visibility** toggle is on by default. It makes preview strokes easier to see by enlarging their displayed thickness and adding a subtle lift/halo. Position, wrapping, background texture mapping, and occlusion remain accurate, but the preview line thickness is visually enlarged.
 
-The Image panel includes:
+## Homology tool
 
-- Upload / replace image
-- Remove image
-- Crop / Stretch / Manual fit modes
-- Image opacity
-- Fit surface to image
-- Edit image placement
+Choose **Hom** or press `5`, then click a stroke. The main value `(m, n)` counts the net integer grid crossings along the actual path: the first number is crossings along `v1`, and the second is crossings along `v2`. Under it, the label also shows the raw endpoint displacement rounded to two decimals. On cylinders, non-repeating directions are shown as `—`; on a plane there is no homology class.
 
-Fit modes:
+## Image workflow
 
-- **Crop**: preserves image proportions, zooming/cropping as needed to cover each cell.
-- **Stretch**: forces the image to fill the cell, including skewed parallelogram cells.
-- **Manual**: lets you place the image exactly inside the base cell. Anything outside the cell is cropped.
+Click **Image** to open the image panel.
 
-Manual placement:
+- Upload / replace image.
+- Remove image.
+- Choose Crop or Stretch.
+- Adjust opacity.
+- Fit the surface to the image aspect ratio.
 
-- Drag the image rectangle to move it.
-- Drag the corner dot to resize it.
-- Use **Keep proportions** to switch between normal proportional scaling and free stretching.
-- Click **Done** to save placement, or **Cancel** to discard.
+When you upload an image, the app asks whether to set the surface dimensions to match the image aspect ratio, because that is usually the desired setup.
 
-Use **Fit surface to image** to create a clean rectangular surface with the image’s aspect ratio. If a drawing already exists, fitting the surface asks before clearing it.
-
-## 3D preview
-
-Use the floating **3D** button to show the current surface dimensions as a simplified 3D object:
-
-- torus when both repeat directions are enabled
-- cylinder when one repeat direction is enabled
-- plane when repeats are off
-
-The preview is interactive: drag to rotate and use the mouse wheel to zoom. It shows the surface dimensions only, not the pencil strokes.
-
-## Line modifiers
-
-These apply only to the Line tool:
-
-- **Shift** snaps to 15° increments and shows the snapped angle.
-- **Alt/Option** draws equally on both sides of the start point.
-- **Shift + Alt/Option** combines both behaviors.
-
-Pen drawing is unaffected by Shift and Alt/Option.
+Manual image placement has been removed to keep the workflow simple and predictable.
 
 ## Shortcuts
 
 - `1` or `P`: Pen
 - `2` or `L`: Line
-- `4` or `E`: Erase
-- `Shift + E`: toggle Object/Rub eraser mode
-- `3` or `V`: Pan
-- `C`: clear drawing
+- `3` or `E`: Erase
+- `Shift + 3` or `Shift + E`: toggle Object/Rub eraser
+- `4` or `V`: Pan
+- `5`: Homology tool
+- `Shift`: line snap, 15° increments
+- `Alt`: draw line from center
 - `Space`: temporary pan
-- `+` / `-`: zoom in/out
-- `0`: center view
-- `F`: fit one cell to view
-- `G`: show/hide surface panel
-- `U`: update surface
-- `H`: toggle Hide grid
-- `I`: show/hide image panel
-- `?`: show/hide shortcut help
-- `Esc`: close panels
-- `Ctrl/Cmd + S`: save editable project
+- `C`: clear
+- `Shift+C`: full reset after confirmation
+- `F`: fit one cell
+- `G`: surface panel
+- `I`: image panel
+- `?`: help panel
+- `Ctrl/Cmd + S`: save project
 - `Ctrl/Cmd + Z`: undo
 - `Ctrl/Cmd + Shift + Z` or `Ctrl/Cmd + Y`: redo
 
-## Architecture
+## Refactored structure notes
 
-The app stores drawings as objects, not permanent pixels. Each object contains:
+No source file is numbered. The project is intentionally kept to 16 actual files with a small, clear structure and no tiny one-purpose folders.
 
-- unique id
-- type (`pen` or `line`)
-- color
-- stroke size
-- world-space points
-- subtle pressure values when available
 
-Rendering is camera-based:
+## Full reset
 
-- The viewport has a center point and zoom level.
-- Panning changes only the camera center; it is unbounded.
-- Zooming is bounded for usability and performance.
-- Repeated copies are generated from integer offsets of active displacement vectors.
-- Uploaded images, grid lines, and strokes all render through the same surface/cell system.
+Press `Shift+C` to reset the entire app to a blank default state. The app asks first because this clears the drawing, image, surface settings, history, and autosave, and it cannot be undone.
+
+## 3D preview readability
+
+The 3D preview uses a mostly white model with subtle depth. With **Enhanced visibility** on, strokes are drawn thicker and clearer in the preview with a note that preview thickness is visually enlarged. With it off, stroke width stays closer to the calculated surface size.
+
+## Latest 3D preview update
+
+The 3D preview renderer was restored to the earlier cleaner model style while keeping the current app features around it. The toolbar order is now Pen, Line, Erase, Pan, Hom. Surface updates keep the currently viewed cell origin anchored on screen, so changes such as a2 feel more stable when panned around repeated cells.
+
+## 3D renderer accuracy update
+
+The 3D preview now uses a WebGL parameter-surface renderer. The single surface cell is mapped to the full torus/cylinder/plane, and the grid, uploaded image texture, and drawing strokes all use the same `(u, v)` cell coordinates. Strokes are rendered as small lifted ribbons on the surface, with depth testing so far-side strokes are hidden by the torus instead of appearing through it or floating in the air. Enhanced visibility still enlarges preview stroke thickness for readability, but the stroke position and wrapping remain tied to the surface coordinates.
