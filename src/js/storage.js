@@ -6,11 +6,11 @@ import { requestRender } from "./render2d.js";
 import { drawPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { closePanels, showStatus } from "./dom.js";
 
-const STORAGE_KEY = "torus-drawing-app.autosave.v8";
+const STORAGE_KEY = "torus-drawing-app.autosave.v9";
 
 export function serializeProject() {
   return {
-    version: 8,
+    version: 9,
     surface: cloneSurface(state.surface),
     hideGrid: state.hideGrid,
     view: { ...state.view },
@@ -21,8 +21,7 @@ export function serializeProject() {
     eraserSize: state.eraserSize,
     backgroundDataUrl: state.background.dataUrl,
     imageFitMode: state.imageFitMode,
-    imageOpacity: state.imageOpacity,
-    previewEnhanced: state.preview.enhanced
+    imageOpacity: state.imageOpacity
   };
 }
 
@@ -39,8 +38,7 @@ export async function restoreProject(data, silent = false) {
   state.ui.colorInput.value = data.color || "#111111";
   state.imageFitMode = data.imageFitMode === "stretch" ? "stretch" : "crop";
   state.imageOpacity = Number.isFinite(data.imageOpacity) ? data.imageOpacity : 0.9;
-  state.preview.enhanced = data.previewEnhanced !== false;
-  if (state.ui.previewEnhancedInput) state.ui.previewEnhancedInput.checked = state.preview.enhanced;
+  state.preview.enhanced = true;
   state.undoStack = [];
   state.redoStack = [];
   await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
@@ -99,7 +97,6 @@ export function resetEverything() {
   state.ui.sizeInput.value = "4";
   state.ui.backgroundInput.value = "";
   state.ui.projectInput.value = "";
-  if (state.ui.previewEnhancedInput) state.ui.previewEnhancedInput.checked = true;
   writeSurfaceControls();
   syncImageUi();
   syncZoomSlider();

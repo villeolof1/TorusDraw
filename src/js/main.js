@@ -59,7 +59,6 @@ function wireToolbar() {
   state.ui.imageButton.onclick = () => openPanel("image");
   state.ui.preview3dButton.onclick = () => { openPanel("preview"); drawPreview3d(); };
   state.ui.preview3dCloseButton.onclick = () => state.ui.preview3dPanel.classList.remove("open");
-  state.ui.previewEnhancedInput.onchange = () => { state.preview.enhanced = state.ui.previewEnhancedInput.checked; drawPreview3d(); scheduleAutosave(); };
   state.ui.helpButton.onclick = () => openPanel("help");
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
   state.ui.exportButton.onclick = exportPNG;

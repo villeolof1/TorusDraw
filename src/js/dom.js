@@ -11,7 +11,7 @@ export function collectDom() {
     "a1Input", "b1Input", "a2Input", "b2Input", "repeatV1Input", "repeatV2Input",
     "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton",
     "backgroundInput", "removeImageButton", "imageCropButton", "imageStretchButton", "imageOpacityInput",
-    "opacityValue", "fitSurfaceToImageButton", "preview3dCanvas", "previewEnhancedInput", "zoomSlider", "zoomInButton",
+    "opacityValue", "fitSurfaceToImageButton", "preview3dCanvas", "zoomSlider", "zoomInButton",
     "zoomOutButton", "angleHint", "status"
   ];
   for (const id of ids) state.ui[id] = document.getElementById(id);
