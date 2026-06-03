@@ -172,3 +172,15 @@ The interface is now split into smaller floating control groups instead of one l
 ## Latest layout adjustment
 
 The 3D and help buttons are now in the bottom-right area, positioned to the left of the zoom rail so their panels do not overlap the zoom controls. The Image and Surface launcher buttons are now in the bottom-left area.
+
+## Latest 3D coordinate-domain update
+
+The 3D preview has been refactored so the rendered surface is generated strictly from the single fundamental cell domain. New `surfaceDomain.js` and `surfaceMap.js` modules define the cell coordinates, edge gluing, surface classification, and coordinate-to-3D mapping. Surface mesh triangles, grid ribbons, image texture coordinates, and stroke ribbons now all use the same map from valid `(u, v)` coordinates inside `[0,1] × [0,1]`, preventing grey/unreachable surface patches from being generated as separate fallback geometry.
+
+## Latest non-orientable 3D preview fix
+
+The 3D preview now distinguishes ordinary Klein-style single-reversal gluings from double-reversed edge schemes. Single-reversal cases use an immersed Klein coordinate map; double-reversed cases use a stable full-cell inspection map so every visible surface patch still comes from reachable `(u, v)` cell coordinates. Grid/stroke overlays are drawn after the surface with depth bias and much smaller lift, which prevents non-orientable normals from burying the grid/strokes inside the surface.
+
+## Latest 3D grid/non-orientable update
+
+The 3D preview grid now draws internal coordinate lines separately from linked seams and open boundaries, so linked surfaces no longer show duplicate boundary grids. Grid overlays now write depth before strokes, reducing the appearance of ghost grids on immersed/self-overlapping previews. Double-reversed A/B edge schemes are rendered as a closed Klein-like coordinate preview rather than as an open inspection sheet.

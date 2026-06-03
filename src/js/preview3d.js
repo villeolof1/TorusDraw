@@ -1,19 +1,31 @@
-// Accurate parameter-surface 3D preview.
-// Everything in this renderer comes from the same single-cell (u, v) domain:
-// surface, image texture, grid, and lifted paint ribbons.
+// WebGL 3D preview generated strictly from the fundamental cell domain.
+// The single source of truth for what is painted on the model is a rasterized
+// cell texture built from the same strokes/background the user sees in 2D.
 import { state } from "./state.js";
-import { clamp, determinant, dot, edgeTopology, length, worldToBasis } from "./math.js";
+import { clamp, length } from "./math.js";
+import { createSurfaceDomain } from "./surfaceDomain.js";
+import { createSurfaceMap } from "./surfaceMap.js";
 
 let canvas;
 let gl;
 let program;
-let texture = null;
-let textureSource = null;
+let cellTexture = null;
+let cachedTextureSignature = "";
+let cachedBackgroundImage = null;
+let cachedTextureCanvas = null;
 let fallbackCtx = null;
 
-const TAU = Math.PI * 2;
+const DEBUG_UV_COVERAGE = false;
 const STRIDE_FLOATS = 12;
-const WARM_SURFACE = [0.985, 0.975, 0.945, 1.0];
+const LONG_TEXTURE_SIDE = 2048;
+const MIN_TEXTURE_SIDE = 512;
+const LARGE_STROKE_TEXTURE_ONLY = 72;
+const WARM_SURFACE = [0.988, 0.980, 0.952, 1.0];
+const GRID_COLOR = [0.10, 0.10, 0.10, 0.34];
+const IMMERSION_GRID_COLOR = [0.08, 0.08, 0.08, 0.28];
+const INSPECTION_GRID_COLOR = [0.08, 0.08, 0.08, 0.40];
+const OPEN_BOUNDARY_COLOR = [0.04, 0.04, 0.04, 0.58];
+const LINKED_SEAM_COLOR = [0.08, 0.08, 0.08, 0.22];
 
 export function initPreview3d() {
   canvas = state.ui.preview3dCanvas;
@@ -31,15 +43,15 @@ export function initPreview3d() {
 }
 
 export function resetPreviewAngle() {
+  const domain = createSurfaceDomain(state.surface);
   state.preview.zoom = 1.0;
-  const topo = edgeTopology(state.surface);
-  if (topo.repeatV1 && topo.repeatV2) {
+  if (domain.type === "torus" || domain.type === "klein" || domain.type === "double-reversed") {
     state.preview.yaw = -0.74;
     state.preview.pitch = 0.45;
-  } else if (topo.repeatV1) {
+  } else if (domain.topology.repeatV1) {
     state.preview.yaw = -0.56;
     state.preview.pitch = 0.42;
-  } else if (topo.repeatV2) {
+  } else if (domain.topology.repeatV2) {
     state.preview.yaw = 1.08;
     state.preview.pitch = 0.34;
   } else {
@@ -78,12 +90,7 @@ function vertexShaderSource() {
       float near = 0.1;
       float far = 100.0;
       float f = 1.0 / tan(uFov * 0.5);
-      gl_Position = vec4(
-        (f / uAspect) * view.x,
-        f * view.y,
-        ((far + near) / (near - far)) * view.z + ((2.0 * far * near) / (near - far)),
-        -view.z
-      );
+      gl_Position = vec4((f / uAspect) * view.x, f * view.y, ((far + near) / (near - far)) * view.z + ((2.0 * far * near) / (near - far)), -view.z);
       vNormal = normal;
       vUV = aUV;
       vColor = aColor;
@@ -108,14 +115,14 @@ function fragmentShaderSource() {
       if (uUseTexture) {
         vec2 t = vec2(uTexRect.x + vUV.x * uTexRect.z, uTexRect.y + (1.0 - vUV.y) * uTexRect.w);
         vec4 tex = texture2D(uTexture, t);
-        vec3 warm = vec3(0.985, 0.975, 0.945);
+        vec3 warm = vec3(0.988, 0.980, 0.952);
         base.rgb = mix(warm, tex.rgb, clamp(uImageStrength, 0.0, 1.0));
         base.a = 1.0;
       }
       if (uUseLighting) {
         vec3 n = normalize(vNormal);
         vec3 light = normalize(vec3(-0.35, 0.72, 0.82));
-        float l = 0.82 + 0.18 * max(dot(n, light), 0.0);
+        float l = 0.93 + 0.07 * max(dot(n, light), 0.0);
         base.rgb *= l;
       }
       gl_FragColor = base;
@@ -169,120 +176,145 @@ function resizePreviewCanvas() {
   }
 }
 
-function shapeType() {
-  const topo = edgeTopology(state.surface);
-  if (topo.repeatV1 && topo.repeatV2) return (topo.flipU || topo.flipV) ? "Klein" : "Torus";
-  if (topo.repeatV1 || topo.repeatV2) return (topo.flipU || topo.flipV) ? "Mobius" : "Cylinder";
-  return "Plane";
+function mapSteps(map) {
+  if (map.type === "plane") return { u: 2, v: 2 };
+  if (map.type === "cylinder" || map.type === "mobius") return { u: 112, v: 56 };
+  return { u: 144, v: 80 };
 }
 
-function modelParameters() {
-  const topo = edgeTopology(state.surface);
-  const l1 = Math.max(1, length(state.surface.v1));
-  const l2 = Math.max(1, length(state.surface.v2));
-  const det = determinant(state.surface);
-  const areaHeight = Math.max(1, Math.abs(det) / l1);
-  const skew = dot(state.surface.v2, state.surface.v1) / Math.max(1, l1 * l1);
-  const type = shapeType();
+function buildSurfaceMesh(map) {
+  const out = [];
+  const steps = mapSteps(map);
+  let patches = 0;
+  const expected = steps.u * steps.v;
 
-  if (type === "Torus") {
-    let R = 1.28;
-    let r = clamp((areaHeight / l1) * 1.18, 0.20, 0.82);
-    return { type, l1, l2, R, r, skew: clamp(skew, -1.8, 1.8), repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
+  for (let i = 0; i < steps.u; i++) {
+    const u0 = i / steps.u;
+    const u1 = (i + 1) / steps.u;
+    for (let j = 0; j < steps.v; j++) {
+      const v0 = j / steps.v;
+      const v1 = (j + 1) / steps.v;
+      if (!map.isValidUV(u0, v0) || !map.isValidUV(u1, v0) || !map.isValidUV(u1, v1) || !map.isValidUV(u0, v1)) continue;
+      pushQuad(out, map, u0, v0, u1, v1, surfaceColor(u0, v0));
+      patches++;
+    }
   }
 
-  if (type === "Klein") return { type, l1, l2, R: 1.08, r: 0.36, skew: clamp(skew, -1.2, 1.2), repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
-
-  if (type === "Cylinder" || type === "Mobius") {
-    const repeatIsV1 = topo.repeatV1;
-    const repeatVector = repeatIsV1 ? state.surface.v1 : state.surface.v2;
-    const openVector = repeatIsV1 ? state.surface.v2 : state.surface.v1;
-    const repeatLength = Math.max(1, length(repeatVector));
-    const openLength = Math.max(1, length(openVector));
-    const openPerp = Math.max(openLength * 0.25, Math.abs(det) / repeatLength);
-    return {
-      type, repeatIsV1, repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV,
-      radius: type === "Mobius" ? 0.92 : 0.78,
-      width: clamp(openPerp / repeatLength * 1.15, 0.32, 0.82),
-      height: clamp(openPerp / repeatLength * 4.3, 1.15, 3.0),
-      skew: clamp(dot(openVector, repeatVector) / Math.max(1, repeatLength * repeatLength), -1.8, 1.8),
-      l1, l2
-    };
-  }
-
-  const maxLen = Math.max(l1, l2, 1);
-  return { type, planeScale: 2.4 / maxLen, l1, l2, repeatV1: topo.repeatV1, repeatV2: topo.repeatV2, flipU: topo.flipU, flipV: topo.flipV };
+  if (patches < expected * 0.995) console.warn("3D surface coverage incomplete", { type: map.type, patches, expected });
+  return new Float32Array(out);
 }
 
-function surfacePoint(u, v, params) {
-  if (params.type === "Torus") {
-    const theta = TAU * mod1(u + params.skew * v);
-    const phi = TAU * mod1(v);
-    return [
-      (params.R + params.r * Math.cos(phi)) * Math.cos(theta),
-      params.r * Math.sin(phi),
-      (params.R + params.r * Math.cos(phi)) * Math.sin(theta)
-    ];
-  }
-
-  if (params.type === "Mobius") {
-    const repeat = params.repeatIsV1 ? u : v;
-    const open = params.repeatIsV1 ? v : u;
-    const theta = TAU * repeat;
-    const w = (open - 0.5) * params.width;
-    const x = (params.radius + w * Math.cos(theta / 2)) * Math.cos(theta);
-    const y = w * Math.sin(theta / 2);
-    const z = (params.radius + w * Math.cos(theta / 2)) * Math.sin(theta);
-    return params.repeatIsV1 ? [x, y, z] : [y, x, z];
-  }
-
-  if (params.type === "Klein") {
-    const uu = TAU * (params.flipV ? v : u);
-    const vv = TAU * (params.flipV ? u : v);
-    const tube = Math.cos(uu / 2) * Math.sin(vv) - Math.sin(uu / 2) * Math.sin(2 * vv);
-    const x = (params.R + params.r * tube) * Math.cos(uu);
-    const z = (params.R + params.r * tube) * Math.sin(uu);
-    const y = params.r * (Math.sin(uu / 2) * Math.sin(vv) + Math.cos(uu / 2) * Math.sin(2 * vv));
-    return [x, y, z];
-  }
-
-  if (params.type === "Cylinder") {
-    const repeat = params.repeatIsV1 ? u : v;
-    const open = params.repeatIsV1 ? v : u;
-    const theta = TAU * mod1(repeat + params.skew * open);
-    const h = (open - 0.5) * params.height;
-    const x = params.radius * Math.cos(theta);
-    const z = params.radius * Math.sin(theta);
-    return params.repeatIsV1 ? [x, h, z] : [h, x, z];
-  }
-
-  const p = [
-    state.surface.v1.x * u + state.surface.v2.x * v,
-    -(state.surface.v1.y * u + state.surface.v2.y * v),
-    0
-  ];
-  return [p[0] * params.planeScale, p[1] * params.planeScale, p[2]];
+function surfaceColor(u, v) {
+  return DEBUG_UV_COVERAGE ? [u, v, 0.5, 1] : WARM_SURFACE;
 }
 
-function surfaceNormal(u, v, params) {
-  const e = 0.001;
-  const p = surfacePoint(u, v, params);
-  const pu = surfacePoint(u + e, v, params);
-  const pv = surfacePoint(u, v + e, params);
-  return normalize(cross(sub3(pv, p), sub3(pu, p)));
+function pushQuad(out, map, u0, v0, u1, v1, color) {
+  const a = surfaceVertex(map, u0, v0, 0);
+  const b = surfaceVertex(map, u1, v0, 0);
+  const c = surfaceVertex(map, u1, v1, 0);
+  const d = surfaceVertex(map, u0, v1, 0);
+  pushTri(out, a, b, c, color);
+  pushTri(out, a, c, d, color);
 }
 
-function mod1(value) { return ((value % 1) + 1) % 1; }
-function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
-function add3(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
-function scale3(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
-function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
-function len3(a) { return Math.hypot(a[0], a[1], a[2]); }
-function normalize(a) { const l = Math.max(0.000001, len3(a)); return [a[0] / l, a[1] / l, a[2] / l]; }
-function clampUV(uv) { return { u: clamp(uv.u, 0, 1), v: clamp(uv.v, 0, 1) }; }
+function surfaceVertex(map, u, v, lift = 0) {
+  const normal = map.normal(u, v);
+  const pos = add3(map.point(u, v), scale3(normal, lift));
+  const uv = map.textureUV(u, v);
+  return { pos, normal, uv };
+}
 
-function pushVertex(out, pos, normal, uv, color) {
-  out.push(pos[0], pos[1], pos[2], normal[0], normal[1], normal[2], uv.u, uv.v, color[0], color[1], color[2], color[3]);
+function buildGridMesh(map, domain) {
+  const out = [];
+  const nonOrientable = map.type === "mobius" || map.type === "klein" || map.type === "double-reversed";
+  const divisions = map.type === "plane" ? 8 : nonOrientable ? 18 : 14;
+  const width = map.type === "plane" ? 0.0048 : nonOrientable ? 0.0058 : 0.0055;
+  const mainGrid = map.representation === "immersion" ? IMMERSION_GRID_COLOR : map.representation === "inspection" ? INSPECTION_GRID_COLOR : GRID_COLOR;
+
+  for (let i = 1; i < divisions; i++) {
+    const u = i / divisions;
+    addLocalGridPath(out, map, t => ({ u, v: t }), width, mainGrid);
+  }
+  for (let j = 1; j < divisions; j++) {
+    const v = j / divisions;
+    addLocalGridPath(out, map, t => ({ u: t, v }), width, mainGrid);
+  }
+
+  addBoundaryAndSeamLines(out, map, domain, width);
+  return new Float32Array(out);
+}
+
+function addBoundaryAndSeamLines(out, map, domain, width) {
+  const linkedU = domain.topology.repeatV1;
+  const linkedV = domain.topology.repeatV2;
+  const seamWidth = width * 0.78;
+  const boundaryWidth = width * 1.55;
+
+  if (linkedU) addLocalGridPath(out, map, t => ({ u: 0, v: t }), seamWidth, LINKED_SEAM_COLOR);
+  else {
+    addLocalGridPath(out, map, t => ({ u: 0, v: t }), boundaryWidth, OPEN_BOUNDARY_COLOR);
+    addLocalGridPath(out, map, t => ({ u: 1, v: t }), boundaryWidth, OPEN_BOUNDARY_COLOR);
+  }
+
+  if (linkedV) addLocalGridPath(out, map, t => ({ u: t, v: 0 }), seamWidth, LINKED_SEAM_COLOR);
+  else {
+    addLocalGridPath(out, map, t => ({ u: t, v: 0 }), boundaryWidth, OPEN_BOUNDARY_COLOR);
+    addLocalGridPath(out, map, t => ({ u: t, v: 1 }), boundaryWidth, OPEN_BOUNDARY_COLOR);
+  }
+}
+
+function addLocalGridPath(out, map, fn, halfWidth, color) {
+  const samples = [];
+  const count = 170;
+  for (let i = 0; i <= count; i++) samples.push(fn(i / count));
+  pushRibbon(out, samples, map, halfWidth, 0.0005, color);
+}
+
+function buildStrokeMesh(map, domain) {
+  const out = [];
+  for (const object of state.objects) {
+    if (!object.points || object.points.length < 2) continue;
+    if ((object.size || 1) > LARGE_STROKE_TEXTURE_ONLY) continue;
+    const uvPoints = object.points.map(point => domain.worldToCell(point)).filter(Boolean);
+    const paths = domain.splitPolylineByGluing(uvPoints);
+    const color = cssColorToRgba(object.color || "#111111");
+    const halfWidth = strokeHalfWidth(object, map);
+    if (halfWidth == null) continue;
+    for (const path of paths) {
+      if (path.length < 2) continue;
+      pushRibbon(out, path, map, halfWidth, 0.0014, color);
+    }
+  }
+  return new Float32Array(out);
+}
+
+function strokeHalfWidth(object, map) {
+  const accurate = (object.size || 1) * (map.worldToModelScale || 0.003) * 0.5;
+  return clamp(accurate, 0.003, 0.12);
+}
+
+function pushRibbon(out, uvPath, map, halfWidth, lift, color) {
+  if (uvPath.length < 2) return;
+  const left = [];
+  const right = [];
+  for (let i = 0; i < uvPath.length; i++) {
+    const prev = uvPath[Math.max(0, i - 1)];
+    const next = uvPath[Math.min(uvPath.length - 1, i + 1)];
+    const uv = uvPath[i];
+    const normal = map.normal(uv.u, uv.v);
+    const p = add3(map.point(uv.u, uv.v), scale3(normal, lift));
+    const pPrev = map.point(prev.u, prev.v);
+    const pNext = map.point(next.u, next.v);
+    const tangent = normalize(sub3(pNext, pPrev));
+    let side = normalize(cross(normal, tangent));
+    if (len3(side) < 0.001) side = [1, 0, 0];
+    left.push({ pos: add3(p, scale3(side, halfWidth)), normal, uv: map.textureUV(uv.u, uv.v) });
+    right.push({ pos: add3(p, scale3(side, -halfWidth)), normal, uv: map.textureUV(uv.u, uv.v) });
+  }
+  for (let i = 1; i < uvPath.length; i++) {
+    pushTri(out, left[i - 1], right[i - 1], right[i], color);
+    pushTri(out, left[i - 1], right[i], left[i], color);
+  }
 }
 
 function pushTri(out, a, b, c, color) {
@@ -291,243 +323,9 @@ function pushTri(out, a, b, c, color) {
   pushVertex(out, c.pos, c.normal, c.uv, color);
 }
 
-function surfaceVertex(u, v, params, lift = 0) {
-  const uv = { u: clamp(u, 0, 1), v: clamp(v, 0, 1) };
-  const normal = surfaceNormal(uv.u, uv.v, params);
-  const pos = add3(surfacePoint(uv.u, uv.v, params), scale3(normal, lift));
-  return { pos, normal, uv };
-}
-
-function buildSurfaceMesh(params) {
-  const out = [];
-  const uSteps = params.type === "Plane" ? 1 : (params.type === "Torus" || params.type === "Klein") ? 128 : 96;
-  const vSteps = params.type === "Plane" ? 1 : (params.type === "Torus" || params.type === "Klein") ? 64 : 48;
-  for (let i = 0; i < uSteps; i++) {
-    const u0 = i / uSteps;
-    const u1 = (i + 1) / uSteps;
-    for (let j = 0; j < vSteps; j++) {
-      const v0 = j / vSteps;
-      const v1 = (j + 1) / vSteps;
-      const a = surfaceVertex(u0, v0, params);
-      const b = surfaceVertex(u1, v0, params);
-      const c = surfaceVertex(u1, v1, params);
-      const d = surfaceVertex(u0, v1, params);
-      pushTri(out, a, b, c, WARM_SURFACE);
-      pushTri(out, a, c, d, WARM_SURFACE);
-    }
-  }
-  return new Float32Array(out);
-}
-
-function buildGridMesh(params) {
-  const out = [];
-  const gridColor = [0.12, 0.12, 0.12, 0.42];
-  const uLines = params.type === "Plane" ? 8 : 16;
-  const vLines = params.type === "Plane" ? 8 : 14;
-  for (let i = 0; i <= uLines; i++) pushRibbonFromUVLine(out, t => ({ u: i / uLines, v: t }), params, 0.006, 0.009, gridColor);
-  for (let j = 0; j <= vLines; j++) pushRibbonFromUVLine(out, t => ({ u: t, v: j / vLines }), params, 0.006, 0.009, gridColor);
-  return new Float32Array(out);
-}
-
-function pushRibbonFromUVLine(out, fn, params, halfWidth, lift, color) {
-  const samples = [];
-  const count = 160;
-  for (let i = 0; i <= count; i++) samples.push(fn(i / count));
-  for (const path of splitAndGluePolyline(samples, params)) pushRibbon(out, path, params, halfWidth, lift, color);
-}
-
-function buildStrokeMesh(params) {
-  const out = [];
-  if (Math.abs(determinant(state.surface)) < 0.001) return new Float32Array(out);
-  for (const object of state.objects) {
-    if (!object.points || object.points.length < 2) continue;
-    const paths = objectToUVPaths(object, params);
-    const color = cssColorToRgba(object.color || "#111111");
-    const halfWidth = strokeHalfWidth(object, params);
-    const haloColor = [0.995, 0.985, 0.955, 0.92];
-    for (const path of paths) {
-      if (state.preview.enhanced) pushRibbon(out, path, params, halfWidth + 0.010, 0.024, haloColor);
-      pushRibbon(out, path, params, halfWidth, 0.030, color);
-    }
-  }
-  return new Float32Array(out);
-}
-
-function strokeHalfWidth(object, params) {
-  const l1 = Math.max(1, length(state.surface.v1));
-  const l2 = Math.max(1, length(state.surface.v2));
-  let scalePerWorld = 0.003;
-  if (params.type === "Torus" || params.type === "Klein") scalePerWorld = ((TAU * (params.R || 1)) / l1 + (TAU * (params.r || 0.35)) / l2) * 0.5;
-  if (params.type === "Cylinder" || params.type === "Mobius") scalePerWorld = ((TAU * params.radius) / (params.repeatIsV1 ? l1 : l2) + (params.height || params.width) / (params.repeatIsV1 ? l2 : l1)) * 0.5;
-  if (params.type === "Plane") scalePerWorld = params.planeScale;
-  const accurate = (object.size || 1) * scalePerWorld * 0.5;
-  const enhanced = Math.max(accurate * 1.9, 0.014);
-  return clamp(state.preview.enhanced ? enhanced : accurate, 0.0035, state.preview.enhanced ? 0.042 : 0.022);
-}
-
-function objectToUVPaths(object, params) {
-  const basisPoints = object.points.map(point => worldToBasis(point, state.surface)).filter(Boolean);
-  return splitAndGluePolyline(basisPoints, params);
-}
-
-function splitAndGluePolyline(points, params) {
-  const paths = [];
-  let current = [];
-  const pushCurrent = () => { if (current.length > 1) paths.push(current); current = []; };
-
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1];
-    const b = points[i];
-    if (!a || !b) { pushCurrent(); continue; }
-    for (const piece of splitAndGlueSegment(a, b, params)) {
-      const sampled = sampleSegment(piece[0], piece[1], params);
-      if (sampled.length < 2) continue;
-      const first = sampled[0];
-      const last = current[current.length - 1];
-      if (!last || uvDistance(last, first) > 0.025) pushCurrent();
-      if (!current.length) current.push(first);
-      for (let k = 1; k < sampled.length; k++) current.push(sampled[k]);
-    }
-  }
-  pushCurrent();
-  return paths;
-}
-
-function splitAndGlueSegment(a, b, params) {
-  const cuts = collectBoundaryCuts(a, b, params);
-  const pieces = [];
-  for (let i = 1; i < cuts.length; i++) {
-    let t0 = cuts[i - 1];
-    let t1 = cuts[i];
-    if (t1 - t0 < 0.00001) continue;
-    const mid = lerpUV(a, b, (t0 + t1) / 2);
-    if (!isVisibleLiftedUV(mid, params)) continue;
-
-    const crossed = t0 > 0.000001 || t1 < 0.999999;
-    const p0 = lerpUV(a, b, t0 === 0 ? t0 : t0 + 0.000001);
-    const p1 = lerpUV(a, b, t1 === 1 ? t1 : t1 - 0.000001);
-    const c0 = cellUVFromLifted(p0, params);
-    const c1 = cellUVFromLifted(p1, params);
-
-    // If a seam produced a long in-cell jump, do not draw a chord through the 3D model.
-    // The neighboring local piece will carry the continuation on the glued side.
-    if (crossed && uvDistance(c0, c1) > 0.78) continue;
-    pieces.push([c0, c1]);
-  }
-  return pieces;
-}
-
-function collectBoundaryCuts(a, b, params) {
-  const cuts = [0, 1];
-  addAxisCuts(cuts, a.u, b.u, axisRepeats("u", params) || axisOpen("u", params));
-  addAxisCuts(cuts, a.v, b.v, axisRepeats("v", params) || axisOpen("v", params));
-  cuts.sort((x, y) => x - y);
-  return cuts.filter((t, i) => t >= -0.000001 && t <= 1.000001 && (i === 0 || Math.abs(t - cuts[i - 1]) > 0.00001));
-}
-
-function addAxisCuts(cuts, a, b, active) {
-  if (!active || !Number.isFinite(a) || !Number.isFinite(b) || Math.abs(a - b) < 0.000001) return;
-  const lo = Math.min(a, b);
-  const hi = Math.max(a, b);
-  const first = Math.ceil(lo + 0.000001);
-  const last = Math.floor(hi - 0.000001);
-  for (let boundary = first; boundary <= last; boundary++) cuts.push((boundary - a) / (b - a));
-  if (lo < 0 && hi > 0) cuts.push((0 - a) / (b - a));
-  if (lo < 1 && hi > 1) cuts.push((1 - a) / (b - a));
-}
-
-function axisRepeats(axis, params) { return axis === "u" ? !!params.repeatV1 : !!params.repeatV2; }
-function axisOpen(axis, params) { return !axisRepeats(axis, params) && (params.type === "Plane" || params.type === "Cylinder" || params.type === "Mobius"); }
-
-function cellUVFromLifted(uv, params) {
-  const iu = params.repeatV1 ? Math.floor(uv.u) : 0;
-  const iv = params.repeatV2 ? Math.floor(uv.v) : 0;
-  let cu = params.repeatV1 ? uv.u - iu : uv.u;
-  let cv = params.repeatV2 ? uv.v - iv : uv.v;
-  if (params.flipV && params.repeatV1 && Math.abs(iu) % 2 === 1) cv = 1 - cv;
-  if (params.flipU && params.repeatV2 && Math.abs(iv) % 2 === 1) cu = 1 - cu;
-  return { u: clamp(cu, 0, 1), v: clamp(cv, 0, 1) };
-}
-
-function isVisibleLiftedUV(uv, params) {
-  if (params.type === "Torus" || params.type === "Klein") return true;
-  if (params.type === "Cylinder" || params.type === "Mobius") {
-    const open = params.repeatV1 ? uv.v : uv.u;
-    return open >= -0.001 && open <= 1.001;
-  }
-  return uv.u >= -0.001 && uv.u <= 1.001 && uv.v >= -0.001 && uv.v <= 1.001;
-}
-
-function lerpUV(a, b, t) { return { u: a.u + (b.u - a.u) * t, v: a.v + (b.v - a.v) * t }; }
-function uvDistance(a, b) { return Math.hypot(a.u - b.u, a.v - b.v); }
-
-function sampleSegment(a, b, params) {
-  const distance = Math.max(Math.abs(b.u - a.u), Math.abs(b.v - a.v));
-  const count = clamp(Math.ceil(distance * 260), 2, 96);
-  const samples = [];
-  for (let i = 0; i <= count; i++) samples.push(clampUV(lerpUV(a, b, i / count)));
-  return samples;
-}
-
-function pushRibbon(out, uvPath, params, halfWidth, lift, color) {
-  if (uvPath.length < 2) return;
-  const left = [];
-  const right = [];
-  for (let i = 0; i < uvPath.length; i++) {
-    const prev = uvPath[Math.max(0, i - 1)];
-    const next = uvPath[Math.min(uvPath.length - 1, i + 1)];
-    const uv = uvPath[i];
-    const normal = surfaceNormal(uv.u, uv.v, params);
-    const p = add3(surfacePoint(uv.u, uv.v, params), scale3(normal, lift));
-    const pPrev = surfacePoint(prev.u, prev.v, params);
-    const pNext = surfacePoint(next.u, next.v, params);
-    const tangent = normalize(sub3(pNext, pPrev));
-    let side = normalize(cross(normal, tangent));
-    if (len3(side) < 0.001) side = [1, 0, 0];
-    left.push({ pos: add3(p, scale3(side, halfWidth)), normal, uv });
-    right.push({ pos: add3(p, scale3(side, -halfWidth)), normal, uv });
-  }
-  for (let i = 1; i < uvPath.length; i++) {
-    pushTri(out, left[i - 1], right[i - 1], right[i], color);
-    pushTri(out, left[i - 1], right[i], left[i], color);
-  }
-}
-
-function cssColorToRgba(value) {
-  if (!value || value[0] !== "#") return [0.07, 0.07, 0.07, 1];
-  const hex = value.slice(1);
-  const full = hex.length === 3 ? hex.split("").map(c => c + c).join("") : hex;
-  const num = Number.parseInt(full, 16);
-  return [((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255, 1];
-}
-
-function uploadTextureIfNeeded() {
-  if (!state.background.image) return null;
-  if (texture && textureSource === state.background.image) return texture;
-  if (!texture) texture = gl.createTexture();
-  textureSource = state.background.image;
-  gl.bindTexture(gl.TEXTURE_2D, texture);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, state.background.image);
-  return texture;
-}
-
-function textureRect() {
-  const iw = state.background.naturalWidth || 1;
-  const ih = state.background.naturalHeight || 1;
-  if (state.imageFitMode === "stretch") return [0, 0, 1, 1];
-  const cellAspect = Math.max(1, length(state.surface.v1)) / Math.max(1, length(state.surface.v2));
-  const imageAspect = iw / ih;
-  if (imageAspect > cellAspect) {
-    const sw = ih * cellAspect;
-    return [(iw - sw) / 2 / iw, 0, sw / iw, 1];
-  }
-  const sh = iw / cellAspect;
-  return [0, (ih - sh) / 2 / ih, 1, sh / ih];
+function pushVertex(out, pos, normal, uv, color) {
+  if (!finite3(pos)) return;
+  out.push(pos[0], pos[1], pos[2], normal[0], normal[1], normal[2], clamp(uv.u, 0, 1), clamp(uv.v, 0, 1), color[0], color[1], color[2], color[3]);
 }
 
 function drawMesh(data, options) {
@@ -557,16 +355,171 @@ function drawMesh(data, options) {
   gl.deleteBuffer(buffer);
 }
 
+function buildCellTextureSignature(domain) {
+  const surface = state.surface;
+  const image = state.background.image;
+  const objects = state.objects.map(object => {
+    const first = object.points[0] || { x: 0, y: 0 };
+    const last = object.points[object.points.length - 1] || { x: 0, y: 0 };
+    return `${object.id}|${object.type}|${object.color}|${object.size}|${object.points.length}|${round4(first.x)}|${round4(first.y)}|${round4(last.x)}|${round4(last.y)}`;
+  }).join(";");
+  const links = [
+    surface.edgeLinks?.v1?.active ? 1 : 0,
+    surface.edgeLinks?.v1?.direction?.left ?? 1,
+    surface.edgeLinks?.v1?.direction?.right ?? 1,
+    surface.edgeLinks?.v2?.active ? 1 : 0,
+    surface.edgeLinks?.v2?.direction?.bottom ?? 1,
+    surface.edgeLinks?.v2?.direction?.top ?? 1
+  ].join(",");
+  return [
+    domain.type,
+    round4(surface.v1.x), round4(surface.v1.y), round4(surface.v2.x), round4(surface.v2.y),
+    state.imageFitMode,
+    round4(state.imageOpacity),
+    image ? `${state.background.naturalWidth}x${state.background.naturalHeight}` : "no-image",
+    links,
+    objects
+  ].join("|");
+}
+
+function ensureCellTexture(domain) {
+  const hasPaint = state.objects.length > 0;
+  const hasImage = !!state.background.image;
+  if (!hasPaint && !hasImage) {
+    cachedTextureSignature = "";
+    cachedBackgroundImage = null;
+    cachedTextureCanvas = null;
+    return null;
+  }
+
+  const signature = buildCellTextureSignature(domain);
+  if (cellTexture && cachedTextureSignature === signature && cachedBackgroundImage === state.background.image && cachedTextureCanvas) return cellTexture;
+
+  cachedTextureCanvas = buildCompositeCellCanvas(domain);
+  if (!cellTexture) cellTexture = gl.createTexture();
+  cachedTextureSignature = signature;
+  cachedBackgroundImage = state.background.image;
+  gl.bindTexture(gl.TEXTURE_2D, cellTexture);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cachedTextureCanvas);
+  return cellTexture;
+}
+
+function buildCompositeCellCanvas(domain) {
+  const size = compositeTextureSize();
+  const cellCanvas = document.createElement("canvas");
+  cellCanvas.width = size.width;
+  cellCanvas.height = size.height;
+  const ctx = cellCanvas.getContext("2d", { alpha: true });
+  ctx.fillStyle = "#fffdf8";
+  ctx.fillRect(0, 0, cellCanvas.width, cellCanvas.height);
+
+  if (state.background.image) drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height);
+  drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height);
+  return cellCanvas;
+}
+
+function compositeTextureSize() {
+  const cellWidth = Math.max(1, length(state.surface.v1));
+  const cellHeight = Math.max(1, length(state.surface.v2));
+  if (cellWidth >= cellHeight) {
+    return {
+      width: LONG_TEXTURE_SIDE,
+      height: Math.max(MIN_TEXTURE_SIDE, Math.round(LONG_TEXTURE_SIDE * (cellHeight / cellWidth)))
+    };
+  }
+  return {
+    width: Math.max(MIN_TEXTURE_SIDE, Math.round(LONG_TEXTURE_SIDE * (cellWidth / cellHeight))),
+    height: LONG_TEXTURE_SIDE
+  };
+}
+
+function drawBackgroundTexture(ctx, width, height) {
+  const image = state.background.image;
+  if (!image) return;
+  const iw = state.background.naturalWidth || image.naturalWidth || 1;
+  const ih = state.background.naturalHeight || image.naturalHeight || 1;
+  ctx.save();
+  ctx.globalAlpha = clamp(state.imageOpacity, 0, 1);
+  if (state.imageFitMode === "stretch") {
+    ctx.drawImage(image, 0, 0, iw, ih, 0, 0, width, height);
+    ctx.restore();
+    return;
+  }
+  const cellAspect = width / Math.max(1, height);
+  const imageAspect = iw / ih;
+  if (imageAspect > cellAspect) {
+    const sw = ih * cellAspect;
+    const sx = (iw - sw) / 2;
+    ctx.drawImage(image, sx, 0, sw, ih, 0, 0, width, height);
+  } else {
+    const sh = iw / cellAspect;
+    const sy = (ih - sh) / 2;
+    ctx.drawImage(image, 0, sy, iw, sh, 0, 0, width, height);
+  }
+  ctx.restore();
+}
+
+function drawObjectsToTexture(ctx, domain, width, height) {
+  const pixelsPerU = width;
+  const pixelsPerV = height;
+  const pixelsPerWorld = 0.5 * (pixelsPerU / Math.max(1, length(state.surface.v1)) + pixelsPerV / Math.max(1, length(state.surface.v2)));
+
+  for (const object of state.objects) {
+    if (!object.points || object.points.length < 2) continue;
+    const uvPoints = object.points.map(point => domain.worldToCell(point)).filter(Boolean);
+    const paths = domain.splitPolylineByGluing(uvPoints);
+    if (!paths.length) continue;
+    ctx.save();
+    ctx.strokeStyle = object.color || "#111111";
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = Math.max(1, (object.size || 1) * pixelsPerWorld);
+
+    for (const path of paths) {
+      if (path.length < 2) continue;
+      ctx.beginPath();
+      const first = texturePoint(path[0], width, height);
+      ctx.moveTo(first.x, first.y);
+      if (object.type === "pen" && path.length > 2) {
+        for (let i = 1; i < path.length - 1; i++) {
+          const p = texturePoint(path[i], width, height);
+          const n = texturePoint(path[i + 1], width, height);
+          ctx.quadraticCurveTo(p.x, p.y, (p.x + n.x) / 2, (p.y + n.y) / 2);
+        }
+        const last = texturePoint(path[path.length - 1], width, height);
+        ctx.lineTo(last.x, last.y);
+      } else {
+        for (let i = 1; i < path.length; i++) {
+          const p = texturePoint(path[i], width, height);
+          ctx.lineTo(p.x, p.y);
+        }
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+}
+
+function texturePoint(uv, width, height) {
+  return { x: clamp(uv.u, 0, 1) * width, y: (1 - clamp(uv.v, 0, 1)) * height };
+}
+
 export function drawPreview3d() {
   if (!canvas) return;
   resizePreviewCanvas();
   if (!gl) return drawFallback();
 
-  const params = modelParameters();
-  const surface = buildSurfaceMesh(params);
-  const grid = buildGridMesh(params);
-  const strokes = buildStrokeMesh(params);
-  const tex = uploadTextureIfNeeded();
+  const domain = createSurfaceDomain(state.surface);
+  const map = createSurfaceMap(domain);
+  const surface = buildSurfaceMesh(map);
+  const grid = buildGridMesh(map, domain);
+  const strokes = buildStrokeMesh(map, domain);
+  const tex = ensureCellTexture(domain);
 
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(1.0, 0.995, 0.975, 1.0);
@@ -584,20 +537,41 @@ export function drawPreview3d() {
   gl.uniform1f(program.uCameraDistance, 5.1 / Math.max(0.55, state.preview.zoom));
   gl.uniform1f(program.uFov, 0.72);
 
+  gl.enable(gl.POLYGON_OFFSET_FILL);
+  gl.polygonOffset(1.0, 1.0);
   gl.depthMask(true);
-  drawMesh(surface, { useTexture: !!tex, texture: tex, texRect: textureRect(), imageStrength: state.imageOpacity, lighting: true });
-  drawMesh(grid, { useTexture: false, lighting: false });
-  drawMesh(strokes, { useTexture: false, lighting: false });
+  drawMesh(surface, {
+    useTexture: !!tex && !DEBUG_UV_COVERAGE,
+    texture: tex,
+    texRect: [0, 0, 1, 1],
+    imageStrength: tex ? 1.0 : 0,
+    lighting: !DEBUG_UV_COVERAGE
+  });
+  gl.disable(gl.POLYGON_OFFSET_FILL);
 
-  updateSummary(params);
+  gl.depthFunc(gl.LEQUAL);
+  gl.depthMask(true);
+  drawMesh(grid, { useTexture: false, lighting: false });
+
+  gl.depthMask(false);
+  drawMesh(strokes, { useTexture: false, lighting: false });
+  gl.depthMask(true);
+  updateSummary(map);
 }
 
-function updateSummary(params) {
+function updateSummary(map) {
   if (!state.ui.preview3dSummary) return;
-  const name = params.type;
+  const label = map.typeLabel || (map.type.charAt(0).toUpperCase() + map.type.slice(1));
   const l1 = Math.round(length(state.surface.v1));
   const l2 = Math.round(length(state.surface.v2));
-  state.ui.preview3dSummary.textContent = `${name} preview · single cell mapped to 3D · |v1| ${l1} · |v2| ${l2}`;
+  const representation = map.type === "double-reversed"
+    ? "closed coordinate preview"
+    : map.representation === "immersion"
+      ? "immersed coordinate map"
+      : map.representation === "inspection"
+        ? "inspection coordinate map"
+        : "full cell coordinate map";
+  state.ui.preview3dSummary.textContent = `${label} · ${representation} · |v1| ${l1} · |v2| ${l2}`;
 }
 
 function drawFallback() {
@@ -608,6 +582,23 @@ function drawFallback() {
   ctx.font = "14px system-ui, sans-serif";
   ctx.fillText("3D preview needs WebGL in this browser.", 18, 32);
 }
+
+function cssColorToRgba(value) {
+  if (!value || value[0] !== "#") return [0.07, 0.07, 0.07, 1];
+  const hex = value.slice(1);
+  const full = hex.length === 3 ? hex.split("").map(c => c + c).join("") : hex;
+  const num = Number.parseInt(full, 16);
+  return [((num >> 16) & 255) / 255, ((num >> 8) & 255) / 255, (num & 255) / 255, 1];
+}
+
+function round4(value) { return Math.round((value || 0) * 10000) / 10000; }
+function add3(a, b) { return [a[0] + b[0], a[1] + b[1], a[2] + b[2]]; }
+function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+function scale3(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
+function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
+function len3(a) { return Math.hypot(a[0], a[1], a[2]); }
+function normalize(a) { const l = Math.max(0.000001, len3(a)); return [a[0] / l, a[1] / l, a[2] / l]; }
+function finite3(p) { return p && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Number.isFinite(p[2]); }
 
 function handlePointerDown(event) {
   event.preventDefault();
