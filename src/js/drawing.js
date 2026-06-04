@@ -1,6 +1,6 @@
 // Pointer input: drawing, panning, line snapping, and two eraser styles.
 import { state, cloneObjects } from "./state.js";
-import { add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell, worldToBasis } from "./math.js";
+import { TAU, add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell, worldToBasis } from "./math.js";
 import { hideAngleHint, showAngleHint } from "./dom.js";
 import { addObject, replaceAll } from "./history.js";
 import { activeDrawingLayer, visibleLayerOpacity } from "./layers.js";
@@ -42,6 +42,8 @@ export function chooseTool(tool) {
   state.tool = tool;
   state.ui.penButton.classList.toggle("active", tool === "pen");
   state.ui.lineButton.classList.toggle("active", tool === "line");
+  state.ui.ellipseButton.classList.toggle("active", tool === "ellipse");
+  state.ui.rectangleButton.classList.toggle("active", tool === "rectangle");
   state.ui.dotButton.classList.toggle("active", tool === "dot");
   state.ui.eraseButton.classList.toggle("active", tool === "erase");
   state.ui.homButton.classList.toggle("active", tool === "hom");
@@ -74,7 +76,7 @@ export function saveCurrentSize() {
   const value = Math.max(1, Number(state.ui.sizeInput.value) || 1);
   if (state.tool === "erase") state.eraserSize = value;
   if (state.tool === "dot") state.dotSize = value;
-  if (state.tool === "pen" || state.tool === "line") state.penSize = value;
+  if (state.tool === "pen" || state.tool === "line" || state.tool === "ellipse" || state.tool === "rectangle") state.penSize = value;
 }
 
 export function setEraserMode(mode) {
@@ -92,6 +94,58 @@ function lineFromModifiers(center, pointer, event) {
     angleDegrees = ((Math.round(snapped * 180 / Math.PI) % 360) + 360) % 360;
   }
   return { points: event.altKey ? [sub(center, delta), add(center, delta)] : [center, add(center, delta)], angleDegrees };
+}
+
+function shapeBoxFromModifiers(anchor, pointer, event) {
+  let dx = pointer.x - anchor.x;
+  let dy = pointer.y - anchor.y;
+  if (event.shiftKey) {
+    const side = Math.max(Math.abs(dx), Math.abs(dy));
+    dx = Math.sign(dx || 1) * side;
+    dy = Math.sign(dy || 1) * side;
+  }
+
+  const a = event.altKey ? { x: anchor.x - dx, y: anchor.y - dy } : anchor;
+  const b = event.altKey ? { x: anchor.x + dx, y: anchor.y + dy } : { x: anchor.x + dx, y: anchor.y + dy };
+  const p0 = withUv({ x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), pressure: 0.5 });
+  const p1 = withUv({ x: Math.max(a.x, b.x), y: Math.max(a.y, b.y), pressure: 0.5 });
+  return { points: [p0, p1] };
+}
+
+function withUv(point) {
+  const uv = worldToBasis(point, state.surface);
+  if (uv) { point.u = uv.u; point.v = uv.v; }
+  return point;
+}
+
+function sampleShapePath(object, segments = 128) {
+  if (!object.points?.length) return [];
+  if (object.type === "rectangle") {
+    const [a, b] = object.points;
+    if (!a || !b) return [];
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    return [
+      withUv({ x: x0, y: y0, pressure: 0.5 }),
+      withUv({ x: x1, y: y0, pressure: 0.5 }),
+      withUv({ x: x1, y: y1, pressure: 0.5 }),
+      withUv({ x: x0, y: y1, pressure: 0.5 }),
+      withUv({ x: x0, y: y0, pressure: 0.5 })
+    ];
+  }
+  if (object.type === "ellipse") {
+    const [a, b] = object.points;
+    if (!a || !b) return [];
+    const cx = (a.x + b.x) / 2, cy = (a.y + b.y) / 2;
+    const rx = Math.abs(b.x - a.x) / 2, ry = Math.abs(b.y - a.y) / 2;
+    const samples = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = TAU * i / segments;
+      samples.push(withUv({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry, pressure: 0.5 }));
+    }
+    return samples;
+  }
+  return [];
 }
 
 function distanceToSegment(p, a, b) {
@@ -117,6 +171,15 @@ function hitObject(object, localPoint, radius) {
   }
 
   const threshold = radius + (object.size || 1) / 2;
+
+  if (object.type === "rectangle" || object.type === "ellipse") {
+    const outline = sampleShapePath(object, object.type === "ellipse" ? 144 : 4);
+    for (let i = 1; i < outline.length; i++) {
+      if (distanceToSegment(localPoint, outline[i - 1], outline[i]) <= threshold) return true;
+    }
+    return false;
+  }
+
   for (let i = 1; i < object.points.length; i++) if (distanceToSegment(localPoint, object.points[i - 1], object.points[i]) <= threshold) return true;
   return false;
 }
@@ -173,6 +236,10 @@ function sampleObjectPath(object) {
     return samples;
   }
 
+  if (object.type === "rectangle" || object.type === "ellipse") {
+    return sampleShapePath(object, object.type === "ellipse" ? 160 : 4);
+  }
+
   if (object.points.length < 2) return object.points.map(p => ({ ...p }));
 
   const samples = [{ ...object.points[0] }];
@@ -219,7 +286,7 @@ function splitByRubEraser(object, point, radius) {
   // A dot is a closed outline. If the erased part is not at the start/end of
   // the sampled ring, the surviving outline can wrap across the sample seam.
   // Merge the last and first chunks so it remains one continuous arc.
-  if (object.type === "dot" && chunks.length > 1) {
+  if ((object.type === "dot" || object.type === "rectangle" || object.type === "ellipse") && chunks.length > 1) {
     const firstSampleRemoved = length(sub(samples[0], point)) <= threshold;
     const lastSampleRemoved = length(sub(samples[samples.length - 1], point)) <= threshold;
     if (!firstSampleRemoved && !lastSampleRemoved) {
@@ -304,6 +371,11 @@ export function movePointer(event) {
     state.previewObject = { ...currentObject, points: data.points };
     showAngleHint(screen, data.angleDegrees); redraw(state.previewObject);
   }
+  if (state.tool === "ellipse" || state.tool === "rectangle") {
+    const data = shapeBoxFromModifiers(startPoint, point, event);
+    state.previewObject = { ...currentObject, points: data.points };
+    hideAngleHint(); redraw(state.previewObject);
+  }
 }
 
 export function stopPointer(event) {
@@ -312,6 +384,7 @@ export function stopPointer(event) {
   event.preventDefault(); isDrawing = false;
   if (state.tool === "erase") { if (eraseChanged) replaceAll(eraseBefore, state.objects); eraseBefore = null; eraseChanged = false; return; }
   if (state.tool === "line") currentObject.points = lineFromModifiers(startPoint, worldFromEvent(event), event).points;
+  if (state.tool === "ellipse" || state.tool === "rectangle") currentObject.points = shapeBoxFromModifiers(startPoint, worldFromEvent(event), event).points;
   if (currentObject.points.length >= 2) addObject(currentObject);
   state.previewObject = null; currentObject = null; startPoint = null; hideAngleHint();
 }

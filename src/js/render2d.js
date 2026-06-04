@@ -132,6 +132,57 @@ function transformedObjectPoint(objectPoint, offset) {
   return cellPoint(state.surface, offset, uv);
 }
 
+function drawShapePath(ctx, object, points) {
+  if (object.type === "rectangle") {
+    if (points.length < 2) return false;
+    const a = points[0], b = points[1];
+    const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+    const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    ctx.beginPath();
+    ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    return true;
+  }
+  if (object.type === "ellipse") {
+    if (points.length < 2) return false;
+    const a = points[0], b = points[1];
+    const cx = (a.x + b.x) / 2;
+    const cy = (a.y + b.y) / 2;
+    const rx = Math.abs(b.x - a.x) / 2;
+    const ry = Math.abs(b.y - a.y) / 2;
+    ctx.beginPath();
+    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    return true;
+  }
+  return false;
+}
+
+function shapeOutlinePoints(object) {
+  if (!object.points?.length || (object.type !== "rectangle" && object.type !== "ellipse")) return [];
+  const [a, b] = object.points;
+  if (!a || !b) return [];
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  if (object.type === "rectangle") {
+    return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
+  }
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+  const rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
+  const points = [];
+  for (let i = 0; i <= 144; i++) {
+    const t = Math.PI * 2 * i / 144;
+    points.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry });
+  }
+  return points;
+}
+
+function drawPolyline(ctx, points) {
+  if (points.length < 2) return false;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  return true;
+}
+
 export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
   if (!object || !object.points?.length) return;
   const { ctx } = state;
@@ -151,6 +202,14 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
       ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.restore();
+    return;
+  }
+
+  if (object.type === "rectangle" || object.type === "ellipse") {
+    ctx.lineWidth = object.size;
+    const outline = shapeOutlinePoints(object).map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+    if (drawPolyline(ctx, outline)) ctx.stroke();
     ctx.restore();
     return;
   }
@@ -190,6 +249,12 @@ function drawObjectHalo(object, offset, selected) {
       ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
       ctx.stroke();
     }
+    ctx.restore();
+    return;
+  }
+  if (object.type === "rectangle" || object.type === "ellipse") {
+    const outline = shapeOutlinePoints(object).map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+    if (drawPolyline(ctx, outline)) ctx.stroke();
     ctx.restore();
     return;
   }

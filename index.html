@@ -53,8 +53,10 @@
       <div class="tool-group primary-tools">
         <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
         <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
-        <button id="dotButton" class="tool-button" title="Dot — 3. Hold D for one temporary dot.">Dot</button>
-        <button id="eraseButton" class="tool-button" title="Erase — 4 or E. Shift+4 toggles eraser mode. Shift+E also works.">Erase</button>
+        <button id="ellipseButton" class="tool-button" title="Ellipse — 3 or O. Shift makes a circle; Alt draws from center.">Ellipse</button>
+        <button id="rectangleButton" class="tool-button" title="Rectangle — 4 or R. Shift makes a square; Alt draws from center.">Rect</button>
+        <button id="dotButton" class="tool-button" title="Dot — 5. Hold D for one temporary dot.">Dot</button>
+        <button id="eraseButton" class="tool-button" title="Erase — 6 or E. Shift+6 toggles eraser mode. Shift+E also works.">Erase</button>
         <div id="eraserOptions" class="tool-group eraser-options" hidden>
           <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
           <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
@@ -63,8 +65,8 @@
     </section>
 
     <section id="navigationTools" aria-label="View and analysis tools">
-      <button id="panButton" class="tool-button" title="Pan — 5 or V. Hold Space for temporary pan.">Pan</button>
-      <button id="homButton" class="tool-button" title="Homology — 6. Click a stroke to inspect its cell displacement.">Hom</button>
+      <button id="panButton" class="tool-button" title="Pan — 7 or V. Hold Space for temporary pan.">Pan</button>
+      <button id="homButton" class="tool-button" title="Homology — 8. Click a stroke to inspect its cell displacement.">Hom</button>
     </section>
 
     <section id="surfacePanel" class="panel" aria-label="Surface controls">
@@ -99,13 +101,11 @@
           <button id="removeV2LinkButton" class="ghost-button" type="button">Remove B</button>
         </div>
       </div>
-      <div class="panel-toggles">
-        <label><input id="hideGridInput" type="checkbox" /> Hide grid</label>
-      </div>
-      <div class="panel-actions">
+      <div class="panel-actions surface-sticky-actions">
         <button id="resetSurfaceButton" class="ghost-button">Reset surface</button>
         <button id="centerViewButton" class="ghost-button">Center</button>
         <button id="fitCellButton" class="ghost-button">Fit cell</button>
+        <label class="sticky-grid-toggle"><input id="hideGridInput" type="checkbox" /> Hide grid</label>
         <button id="updateSurfaceButton" class="primary-button">Update surface</button>
       </div>
     </section>
@@ -167,7 +167,14 @@
         </div>
         <button id="preview3dCloseButton" class="mini-close" aria-label="Close 3D preview">×</button>
       </div>
-      <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
+      <div class="preview-canvas-wrap">
+        <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
+        <label class="preview-twist-rail" title="Twist/roll the 3D model around its natural closed direction">
+          <span>Twist</span>
+          <input id="previewTwistInput" type="range" min="-180" max="180" value="0" orient="vertical" />
+          <button id="previewTwistResetButton" class="mini-toggle" type="button" title="Reset twist">0</button>
+        </label>
+      </div>
       <div class="surface-section preview-opacity-section">
         <label class="preview-toggle-control" title="When on, the model is subtly transparent. Shortcut: T">
           <span>Transparent model</span>
@@ -177,42 +184,28 @@
     </section>
 
 
-    <section id="preview3dWarningPanel" class="panel preview-warning-panel" aria-label="3D preview accuracy notice">
-      <div class="panel-title-row">
-        <div>
-          <div class="panel-title">3D preview notice</div>
-          <div class="panel-subtitle">Reversed edge links detected</div>
-        </div>
-        <button id="preview3dWarningCloseButton" class="mini-close" aria-label="Close 3D preview notice">×</button>
-      </div>
-      <p class="panel-copy">
-        This surface uses orientation-reversing edge identifications. The 3D preview is a coordinate-faithful visualization, but for non-orientable or self-intersecting surfaces it may not be a fully metric-accurate physical embedding.
-      </p>
-      <div class="panel-actions">
-        <button id="preview3dWarningCancelButton" class="ghost-button" type="button">Close</button>
-        <button id="preview3dWarningViewButton" class="primary-button" type="button">View anyway</button>
-      </div>
-    </section>
-
     <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">
       <div class="panel-title">Shortcuts</div>
       <div class="shortcut-grid">
         <div><kbd>1</kbd> / <kbd>P</kbd></div><div>Pen</div>
         <div><kbd>2</kbd> / <kbd>L</kbd></div><div>Line</div>
-        <div><kbd>3</kbd></div><div>Dot tool</div>
+        <div><kbd>3</kbd> / <kbd>O</kbd></div><div>Ellipse</div>
+        <div><kbd>4</kbd> / <kbd>R</kbd></div><div>Rectangle</div>
+        <div><kbd>5</kbd></div><div>Dot tool</div>
         <div><kbd>Hold D</kbd></div><div>Temporary dot</div>
-        <div><kbd>4</kbd> / <kbd>E</kbd></div><div>Erase</div>
-        <div><kbd>Shift+4</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
-        <div><kbd>5</kbd> / <kbd>V</kbd></div><div>Pan</div>
-        <div><kbd>6</kbd></div><div>Homology tool</div>
-        <div><kbd>Shift</kbd></div><div>Line snap, 15°</div>
-        <div><kbd>Alt</kbd></div><div>Line from center</div>
+        <div><kbd>6</kbd> / <kbd>E</kbd></div><div>Erase</div>
+        <div><kbd>Shift+6</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
+        <div><kbd>7</kbd> / <kbd>V</kbd></div><div>Pan</div>
+        <div><kbd>8</kbd></div><div>Homology tool</div>
+        <div><kbd>Shift</kbd></div><div>Snap line / constrain shape</div>
+        <div><kbd>Alt</kbd></div><div>Draw line/shape from center</div>
         <div><kbd>Space</kbd></div><div>Temporary pan</div>
         <div><kbd>C</kbd></div><div>Clear</div>
         <div><kbd>Shift+C</kbd></div><div>Full reset</div>
         <div><kbd>F</kbd></div><div>Fit cell</div>
         <div><kbd>M</kbd></div><div>3D model preview</div>
         <div><kbd>T</kbd></div><div>Transparent 3D model</div>
+        <div><kbd>Twist slider</kbd></div><div>Roll/twist 3D model view</div>
         <div><kbd>G</kbd></div><div>Surface panel</div>
         <div><kbd>U</kbd></div><div>Update surface</div>
         <div><kbd>H</kbd></div><div>Toggle grid</div>

@@ -45,7 +45,7 @@ export const state = {
   activeLayerId: "layer-1",
   nextLayerId: 2,
 
-  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, transparent: true, opacity: 0.8, dragging: false, last: null, enhanced: true },
+  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, twist: 0, transparent: true, opacity: 0.8, dragging: false, last: null, enhanced: true },
   renderQueued: false,
   statusTimer: null,
   autosaveTimer: null,

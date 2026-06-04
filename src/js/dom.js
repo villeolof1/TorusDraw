@@ -3,7 +3,7 @@ import { state } from "./state.js";
 
 export function collectDom() {
   const ids = [
-    "drawingCanvas", "penButton", "lineButton", "dotButton", "eraseButton", "panButton", "eraserOptions",
+    "drawingCanvas", "penButton", "lineButton", "ellipseButton", "rectangleButton", "dotButton", "eraseButton", "panButton", "eraserOptions",
     "eraseObjectButton", "eraseRubButton", "homButton", "undoButton", "redoButton", "clearButton", "colorInput",
     "sizeInput", "sizeBlock", "surfaceButton", "imageButton", "preview3dButton", "exportButton",
     "saveProjectButton", "projectInput", "surfacePanel", "imagePanel", "imageCloseButton", "imageSummary", "addLayerButton", "layerList", "imageLayerCard", "imageLayerThumb", "imageLayerStatus", "imageLayerVisibilityButton", "moveLayerUpButton", "moveLayerDownButton",
@@ -11,7 +11,7 @@ export function collectDom() {
     "a1Input", "b1Input", "a2Input", "b2Input", "repeatV1Input", "repeatV2Input",
     "edgeDiagram", "edgeStatus", "removeV1LinkButton", "removeV2LinkButton", "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton", "presetDefaultButton", "presetSquareButton", "presetRhombusButton", "presetGoldenButton",
     "backgroundInput", "removeImageButton", "imageCropButton", "imageStretchButton", "imageOpacityInput",
-    "opacityValue", "fitSurfaceToImageButton", "preview3dCanvas", "zoomSlider", "zoomInButton",
+    "opacityValue", "fitSurfaceToImageButton", "preview3dCanvas", "previewTwistInput", "previewTwistResetButton", "zoomSlider", "zoomInButton",
     "zoomOutButton", "angleHint", "status"
   ];
   for (const id of ids) state.ui[id] = document.getElementById(id);
@@ -29,16 +29,16 @@ export function openPanel(name) {
 
   const target = group[name];
   const shouldOpen = target && !target.classList.contains("open");
-  for (const panel of Object.values(group)) panel.classList.remove("open");
+  for (const panel of Object.values(group).filter(Boolean)) panel.classList.remove("open");
   if (target && shouldOpen) target.classList.add("open");
 }
 
 export function closePanels() {
-  for (const panel of [state.ui.surfacePanel, state.ui.imagePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel]) panel.classList.remove("open");
+  for (const panel of [state.ui.surfacePanel, state.ui.imagePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel].filter(Boolean)) panel.classList.remove("open");
 }
 
 export function closeFloatingPanelsOnly() {
-  for (const panel of [state.ui.imagePanel, state.ui.surfacePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel]) panel.classList.remove("open");
+  for (const panel of [state.ui.imagePanel, state.ui.surfacePanel, state.ui.preview3dPanel, state.ui.preview3dWarningPanel, state.ui.helpPanel].filter(Boolean)) panel.classList.remove("open");
 }
 
 export function showStatus(message, persistent = false) {

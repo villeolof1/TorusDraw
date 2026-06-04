@@ -13,12 +13,19 @@ let cellTexture = null;
 let cachedTextureSignature = "";
 let cachedBackgroundImage = null;
 let cachedTextureCanvas = null;
+let cachedTextureRect = [0, 0, 1, 1];
+let paintTexture = null;
+let cachedPaintSignature = "";
+let cachedPaintBackgroundImage = null;
+let cachedPaintCanvas = null;
+let cachedPaintRect = [0, 0, 1, 1];
 let fallbackCtx = null;
 
 const DEBUG_UV_COVERAGE = false;
 const STRIDE_FLOATS = 12;
 const LONG_TEXTURE_SIDE = 2048;
 const MIN_TEXTURE_SIDE = 512;
+const TEXTURE_PAD = 28;
 const LARGE_STROKE_TEXTURE_ONLY = 72;
 const WARM_SURFACE = [0.988, 0.980, 0.952, 1.0];
 const GRID_COLOR = [0.10, 0.10, 0.10, 0.34];
@@ -124,6 +131,7 @@ function fragmentShaderSource() {
     uniform vec4 uTexRect;
     uniform float uImageStrength;
     uniform float uOpacity;
+    uniform bool uPreserveTextureAlpha;
     varying vec3 vNormal;
     varying vec2 vUV;
     varying vec4 vColor;
@@ -133,9 +141,14 @@ function fragmentShaderSource() {
       if (uUseTexture) {
         vec2 t = vec2(uTexRect.x + vUV.x * uTexRect.z, uTexRect.y + (1.0 - vUV.y) * uTexRect.w);
         vec4 tex = texture2D(uTexture, t);
-        vec3 warm = vec3(0.988, 0.980, 0.952);
-        base.rgb = mix(warm, tex.rgb, clamp(uImageStrength, 0.0, 1.0));
-        base.a = 1.0;
+        if (uPreserveTextureAlpha) {
+          base.rgb = tex.rgb;
+          base.a = tex.a;
+        } else {
+          vec3 warm = vec3(0.988, 0.980, 0.952);
+          base.rgb = mix(warm, tex.rgb, clamp(uImageStrength, 0.0, 1.0));
+          base.a = 1.0;
+        }
       }
       if (uUseLighting) {
         vec3 n = normalize(vNormal);
@@ -176,7 +189,8 @@ function createProgram(gl, vsSource, fsSource) {
     uTwoSidedLighting: gl.getUniformLocation(p, "uTwoSidedLighting"),
     uTexRect: gl.getUniformLocation(p, "uTexRect"),
     uImageStrength: gl.getUniformLocation(p, "uImageStrength"),
-    uOpacity: gl.getUniformLocation(p, "uOpacity")
+    uOpacity: gl.getUniformLocation(p, "uOpacity"),
+    uPreserveTextureAlpha: gl.getUniformLocation(p, "uPreserveTextureAlpha")
   };
 }
 
@@ -359,6 +373,29 @@ function dotRingUvPath(center, object) {
   return points;
 }
 
+function shapeUvPath(object, domain) {
+  if (!object.points?.length || (object.type !== "rectangle" && object.type !== "ellipse")) return [];
+  const [a, b] = object.points;
+  if (!a || !b) return [];
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const worldPoints = [];
+
+  if (object.type === "rectangle") {
+    worldPoints.push({ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 });
+  } else {
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
+    const rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
+    const segments = 144;
+    for (let i = 0; i <= segments; i++) {
+      const t = Math.PI * 2 * i / segments;
+      worldPoints.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry });
+    }
+  }
+
+  return worldPoints.map(point => domain.worldToCell(point)).filter(Boolean);
+}
+
 function dotOutlineHalfWidth(object, map) {
   const outlineWorld = Math.max(1, (object.size || 20) * 0.13);
   return clamp(outlineWorld * (map.worldToModelScale || 0.003) * 0.5, 0.0045, 0.045);
@@ -413,6 +450,19 @@ function buildStrokeMesh(map, domain, targetLayer = null, layerLift = 0) {
 
     if (object.type === "dot") {
       addDotMesh(out, object, map, domain, color, objectLift);
+      continue;
+    }
+
+    if (object.type === "rectangle" || object.type === "ellipse") {
+      const shapePath = shapeUvPath(object, domain);
+      const paths = domain.splitPolylineByGluing(shapePath);
+      const halfWidth = strokeHalfWidth(object, map);
+      if (halfWidth != null) {
+        for (const path of paths) {
+          if (path.length < 2) continue;
+          pushRibbon(out, path, map, halfWidth, 0.0014 + objectLift, color);
+        }
+      }
       continue;
     }
 
@@ -500,6 +550,7 @@ function drawMesh(data, options) {
   gl.uniform4fv(program.uTexRect, options.texRect || [0, 0, 1, 1]);
   gl.uniform1f(program.uImageStrength, options.imageStrength ?? 0);
   gl.uniform1f(program.uOpacity, options.opacity ?? 1.0);
+  gl.uniform1i(program.uPreserveTextureAlpha, options.preserveTextureAlpha ? 1 : 0);
   if (options.texture) {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, options.texture);
@@ -509,14 +560,19 @@ function drawMesh(data, options) {
   gl.deleteBuffer(buffer);
 }
 
-function buildCellTextureSignature(domain) {
+function buildCellTextureSignature(domain, includeObjects = false) {
   const surface = state.surface;
   const image = state.background.image;
   const layerSignature = (state.layers || []).map(layer => `${layer.id}:${layer.type}:${layer.visible !== false ? 1 : 0}:${round4(layer.opacity ?? 1)}:${layer.name}`).join(",");
   const objects = state.objects.map(object => {
     const first = object.points[0] || { x: 0, y: 0 };
     const last = object.points[object.points.length - 1] || { x: 0, y: 0 };
-    return `${object.id}|${object.layerId || "layer-1"}|${object.type}|${object.color}|${object.size}|${object.points.length}|${round4(first.x)}|${round4(first.y)}|${round4(last.x)}|${round4(last.y)}`;
+    const pointHash = object.points.reduce((sum, point, index) => {
+      const x = Math.round((point.x ?? 0) * 10);
+      const y = Math.round((point.y ?? 0) * 10);
+      return (sum + ((index + 1) * 131 + x * 17 + y * 31)) % 1000000007;
+    }, 0);
+    return `${object.id}|${object.layerId || "layer-1"}|${object.type}|${object.color}|${object.size}|${object.points.length}|${round4(first.x)}|${round4(first.y)}|${round4(last.x)}|${round4(last.y)}|${pointHash}`;
   }).join(";");
   const links = [
     surface.edgeLinks?.v1?.active ? 1 : 0,
@@ -528,6 +584,7 @@ function buildCellTextureSignature(domain) {
   ].join(",");
   return [
     domain.type,
+    includeObjects ? "with-paint" : "background-only",
     round4(surface.v1.x), round4(surface.v1.y), round4(surface.v2.x), round4(surface.v2.y),
     state.imageFitMode,
     round4(state.imageOpacity),
@@ -538,20 +595,26 @@ function buildCellTextureSignature(domain) {
   ].join("|");
 }
 
-function ensureCellTexture(domain) {
+function ensureCellTexture(domain, includeObjects = false) {
   const imageLayer = layerByType("image");
   const hasImage = !!state.background.image && imageLayer?.visible !== false && (imageLayer?.opacity ?? 1) > 0;
-  if (!hasImage) {
+  const hasPaint = includeObjects && hasVisibleDrawingObjects();
+  if (!hasImage && !hasPaint) {
     cachedTextureSignature = "";
     cachedBackgroundImage = null;
     cachedTextureCanvas = null;
+    cachedTextureRect = [0, 0, 1, 1];
     return null;
   }
 
-  const signature = buildCellTextureSignature(domain);
-  if (cellTexture && cachedTextureSignature === signature && cachedBackgroundImage === state.background.image && cachedTextureCanvas) return cellTexture;
+  const signature = buildCellTextureSignature(domain, includeObjects);
+  if (cellTexture && cachedTextureSignature === signature && cachedBackgroundImage === state.background.image && cachedTextureCanvas) {
+    return { texture: cellTexture, texRect: cachedTextureRect };
+  }
 
-  cachedTextureCanvas = buildCompositeCellCanvas(domain);
+  const built = buildCompositeCellCanvas(domain, includeObjects);
+  cachedTextureCanvas = built.canvas;
+  cachedTextureRect = built.texRect;
   if (!cellTexture) cellTexture = gl.createTexture();
   cachedTextureSignature = signature;
   cachedBackgroundImage = state.background.image;
@@ -562,10 +625,46 @@ function ensureCellTexture(domain) {
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
   gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
   gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cachedTextureCanvas);
-  return cellTexture;
+  return { texture: cellTexture, texRect: cachedTextureRect };
 }
 
-function buildCompositeCellCanvas(domain) {
+function ensurePaintTexture(domain) {
+  if (!hasVisibleDrawingObjects()) {
+    cachedPaintSignature = "";
+    cachedPaintBackgroundImage = null;
+    cachedPaintCanvas = null;
+    cachedPaintRect = [0, 0, 1, 1];
+    return null;
+  }
+  const signature = `${buildCellTextureSignature(domain, true)}|paint-only`;
+  if (paintTexture && cachedPaintSignature === signature && cachedPaintBackgroundImage === state.background.image && cachedPaintCanvas) {
+    return { texture: paintTexture, texRect: cachedPaintRect };
+  }
+  const built = buildPaintOnlyCanvas(domain);
+  cachedPaintCanvas = built.canvas;
+  cachedPaintRect = built.texRect;
+  if (!paintTexture) paintTexture = gl.createTexture();
+  cachedPaintSignature = signature;
+  cachedPaintBackgroundImage = state.background.image;
+  gl.bindTexture(gl.TEXTURE_2D, paintTexture);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, cachedPaintCanvas);
+  return { texture: paintTexture, texRect: cachedPaintRect };
+}
+
+function hasVisibleDrawingObjects() {
+  return state.objects.some(object => {
+    if (!object.points?.length) return false;
+    const layer = layerForObject(object);
+    return layer?.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0;
+  });
+}
+
+function buildCompositeCellCanvas(domain, includeObjects = false) {
   const size = compositeTextureSize();
   const cellCanvas = document.createElement("canvas");
   cellCanvas.width = size.width;
@@ -581,7 +680,94 @@ function buildCompositeCellCanvas(domain) {
     drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height, false);
     ctx.restore();
   }
-  return cellCanvas;
+
+  if (includeObjects) {
+    for (const layer of state.layers || []) {
+      if (layer.type !== "drawing" || layer.visible === false || (layer.opacity ?? 1) <= 0) continue;
+      ctx.save();
+      ctx.globalAlpha = layer.opacity ?? 1;
+      drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height, layer);
+      ctx.restore();
+    }
+  }
+  return buildTextureCanvasWithPadding(cellCanvas, domain);
+}
+
+function buildPaintOnlyCanvas(domain) {
+  const size = compositeTextureSize();
+  const cellCanvas = document.createElement("canvas");
+  cellCanvas.width = size.width;
+  cellCanvas.height = size.height;
+  const ctx = cellCanvas.getContext("2d", { alpha: true });
+  ctx.clearRect(0, 0, cellCanvas.width, cellCanvas.height);
+
+  for (const layer of state.layers || []) {
+    if (layer.type !== "drawing" || layer.visible === false || (layer.opacity ?? 1) <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = layer.opacity ?? 1;
+    drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height, layer);
+    ctx.restore();
+  }
+  return buildTextureCanvasWithPadding(cellCanvas, domain);
+}
+
+function buildTextureCanvasWithPadding(coreCanvas, domain, pad = TEXTURE_PAD) {
+  const needsPad = domain.topology?.repeatV1 || domain.topology?.repeatV2;
+  if (!needsPad || pad <= 0) return { canvas: coreCanvas, texRect: [0, 0, 1, 1] };
+
+  const padded = document.createElement("canvas");
+  padded.width = coreCanvas.width + pad * 2;
+  padded.height = coreCanvas.height + pad * 2;
+  const ctx = padded.getContext("2d", { alpha: true });
+  ctx.clearRect(0, 0, padded.width, padded.height);
+  ctx.drawImage(coreCanvas, pad, pad);
+
+  const w = coreCanvas.width;
+  const h = coreCanvas.height;
+  const topo = domain.topology || {};
+
+  if (topo.repeatV1) {
+    drawCopyPatch(ctx, coreCanvas, w - pad, 0, pad, h, 0, pad, pad, h, { flipY: !!topo.flipV });
+    drawCopyPatch(ctx, coreCanvas, 0, 0, pad, h, w + pad, pad, pad, h, { flipY: !!topo.flipV });
+  } else {
+    drawCopyPatch(ctx, coreCanvas, 0, 0, 1, h, 0, pad, pad, h);
+    drawCopyPatch(ctx, coreCanvas, w - 1, 0, 1, h, w + pad, pad, pad, h);
+  }
+
+  if (topo.repeatV2) {
+    drawCopyPatch(ctx, coreCanvas, 0, h - pad, w, pad, pad, 0, w, pad, { flipX: !!topo.flipU });
+    drawCopyPatch(ctx, coreCanvas, 0, 0, w, pad, pad, h + pad, w, pad, { flipX: !!topo.flipU });
+  } else {
+    drawCopyPatch(ctx, coreCanvas, 0, 0, w, 1, pad, 0, w, pad);
+    drawCopyPatch(ctx, coreCanvas, 0, h - 1, w, 1, pad, h + pad, w, pad);
+  }
+
+  const leftSourceX = topo.repeatV1 ? w - pad : 0;
+  const rightSourceX = topo.repeatV1 ? 0 : w - pad;
+  const topSourceY = topo.repeatV2 ? h - pad : 0;
+  const bottomSourceY = topo.repeatV2 ? 0 : h - pad;
+  const fx = !!topo.flipU;
+  const fy = !!topo.flipV;
+  drawCopyPatch(ctx, coreCanvas, leftSourceX, topSourceY, pad, pad, 0, 0, pad, pad, { flipX: fx, flipY: fy });
+  drawCopyPatch(ctx, coreCanvas, rightSourceX, topSourceY, pad, pad, w + pad, 0, pad, pad, { flipX: fx, flipY: fy });
+  drawCopyPatch(ctx, coreCanvas, leftSourceX, bottomSourceY, pad, pad, 0, h + pad, pad, pad, { flipX: fx, flipY: fy });
+  drawCopyPatch(ctx, coreCanvas, rightSourceX, bottomSourceY, pad, pad, w + pad, h + pad, pad, pad, { flipX: fx, flipY: fy });
+
+  return {
+    canvas: padded,
+    texRect: [pad / padded.width, pad / padded.height, w / padded.width, h / padded.height]
+  };
+}
+
+function drawCopyPatch(ctx, image, sx, sy, sw, sh, dx, dy, dw, dh, options = {}) {
+  if (sw <= 0 || sh <= 0 || dw <= 0 || dh <= 0) return;
+  const flipX = !!options.flipX;
+  const flipY = !!options.flipY;
+  ctx.save();
+  ctx.translate(dx + (flipX ? dw : 0), dy + (flipY ? dh : 0));
+  ctx.scale(flipX ? -1 : 1, flipY ? -1 : 1);
+  ctx.drawImage(image, sx, sy, sw, sh, 0, 0, dw, dh);
+  ctx.restore();
 }
 
 function compositeTextureSize() {
@@ -663,6 +849,24 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
       continue;
     }
 
+    if (object.type === "rectangle" || object.type === "ellipse") {
+      const paths = domain.splitPolylineByGluing(shapeUvPath(object, domain));
+      ctx.lineWidth = Math.max(1, (object.size || 1) * pixelsPerWorld);
+      for (const path of paths) {
+        if (path.length < 2) continue;
+        ctx.beginPath();
+        const first = texturePoint(path[0], width, height);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < path.length; i++) {
+          const p = texturePoint(path[i], width, height);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.stroke();
+      }
+      ctx.restore();
+      continue;
+    }
+
     if (object.points.length < 2) { ctx.restore(); continue; }
     const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
     const paths = domain.splitPolylineByGluing(uvPoints);
@@ -708,12 +912,17 @@ export function drawPreview3d() {
   if (!gl) return drawFallback();
 
   const domain = createSurfaceDomain(state.surface);
-  const map = createSurfaceMap(domain);
+  const map = createSurfaceMap(domain, { viewTwist: (state.preview.twist || 0) / 360 });
   const surface = buildSurfaceMesh(map);
   const grid = buildGridMesh(map, domain);
-  const drawingLayers = (state.layers || []).filter(layer => layer.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0);
+  const texturePaint = shouldBakePaintToSurface(map);
+  const drawingLayers = texturePaint ? [] : (state.layers || []).filter(layer => layer.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0);
   const strokeMeshes = drawingLayers.map((layer, index) => buildStrokeMesh(map, domain, layer, index * STROKE_LAYER_LIFT));
-  const tex = ensureCellTexture(domain);
+  const baseTexture = ensureCellTexture(domain, texturePaint ? false : false);
+  const compositeTexture = texturePaint ? null : ensureCellTexture(domain, false);
+  const paintTexture = texturePaint ? ensurePaintTexture(domain) : null;
+  const tex = texturePaint ? baseTexture : compositeTexture;
+  syncTwistControlAvailability(map);
 
   gl.viewport(0, 0, canvas.width, canvas.height);
   gl.clearColor(1.0, 0.995, 0.975, 1.0);
@@ -737,8 +946,8 @@ export function drawPreview3d() {
   gl.depthMask(!translucentSurface);
   drawMesh(surface, {
     useTexture: !!tex && !DEBUG_UV_COVERAGE,
-    texture: tex,
-    texRect: [0, 0, 1, 1],
+    texture: tex?.texture,
+    texRect: tex?.texRect || [0, 0, 1, 1],
     imageStrength: tex ? 1.0 : 0,
     opacity: state.preview.opacity ?? DEFAULT_SURFACE_OPACITY,
     lighting: !DEBUG_UV_COVERAGE,
@@ -749,6 +958,24 @@ export function drawPreview3d() {
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(!translucentSurface);
   drawMesh(grid, { useTexture: false, lighting: false });
+
+  if (paintTexture && !DEBUG_UV_COVERAGE) {
+    gl.enable(gl.POLYGON_OFFSET_FILL);
+    gl.polygonOffset(-1.0, -1.0);
+    gl.depthFunc(gl.LEQUAL);
+    gl.depthMask(false);
+    drawMesh(surface, {
+      useTexture: true,
+      texture: paintTexture.texture,
+      texRect: paintTexture.texRect || [0, 0, 1, 1],
+      imageStrength: 1.0,
+      opacity: 1.0,
+      lighting: false,
+      preserveTextureAlpha: true
+    });
+    gl.depthMask(!translucentSurface);
+    gl.disable(gl.POLYGON_OFFSET_FILL);
+  }
 
   // Strokes are rendered after the surface as real 3D geometry, layer by
   // layer. Depth writing is intentionally ON. This preserves normal layer
@@ -764,6 +991,26 @@ export function drawPreview3d() {
 
 function isNonOrientable(map) {
   return map.type === "mobius" || map.type === "klein" || map.type === "double-reversed";
+}
+
+function shouldBakePaintToSurface(map) {
+  // For non-orientable/self-intersecting surfaces, lifted ribbon geometry can
+  // choose the locally wrong side of the surface and appear buried, clipped, or
+  // randomly hidden. Baking the paint into the surface texture keeps every mark
+  // on the actual cell coordinates and lets depth testing hide only genuinely
+  // far-side surface regions.
+  return map.type === "klein" || map.type === "double-reversed" || map.type === "mobius";
+}
+
+function twistAppliesToMap(map) {
+  return map.type !== "plane";
+}
+
+function syncTwistControlAvailability(map) {
+  if (!state.ui.previewTwistInput) return;
+  const enabled = twistAppliesToMap(map);
+  state.ui.previewTwistInput.disabled = !enabled;
+  if (state.ui.previewTwistResetButton) state.ui.previewTwistResetButton.disabled = !enabled;
 }
 
 function updateSummary(map) {
@@ -784,7 +1031,10 @@ function updateSummary(map) {
         : map.representation === "inspection"
           ? "inspection coordinate map"
           : "full cell coordinate map";
-  state.ui.preview3dSummary.textContent = `${label} · ${representation} · |v1| ${l1} · |v2| ${l2}`;
+  const audit = map.metricAudit ? ` · metric avg ${(map.metricAudit.averageStretchError * 100).toFixed(1)}%` : "";
+  const twist = Math.round(state.preview.twist || 0);
+  const twistText = twist && twistAppliesToMap(map) ? ` · twist ${twist}°` : "";
+  state.ui.preview3dSummary.textContent = `${label} · ${representation}${audit}${twistText} · |v1| ${l1} · |v2| ${l2}`;
 }
 
 function drawFallback() {

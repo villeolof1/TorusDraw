@@ -27,7 +27,8 @@ export function serializeProject() {
     layers: serializableLayers(),
     activeLayerId: state.activeLayerId,
     nextLayerId: state.nextLayerId,
-    previewTransparent: state.preview.transparent !== false
+    previewTransparent: state.preview.transparent !== false,
+    previewTwist: state.preview.twist || 0
   };
 }
 
@@ -48,6 +49,7 @@ export async function restoreProject(data, silent = false) {
   state.preview.enhanced = true;
   state.preview.transparent = data.previewTransparent !== false;
   state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
+  state.preview.twist = Math.max(0, Math.min(540, Number(data.previewTwist || 0)));
   state.undoStack = [];
   state.redoStack = [];
 
@@ -63,6 +65,7 @@ export async function restoreProject(data, silent = false) {
   renderLayerPanel();
   syncImageUi();
   syncZoomSlider();
+  if (state.ui.previewTwistInput) state.ui.previewTwistInput.value = String(state.preview.twist || 0);
   state.ui.undoButton.disabled = true;
   state.ui.redoButton.disabled = true;
   requestRender();
@@ -111,6 +114,7 @@ export function resetEverything() {
   state.preview.enhanced = true;
   state.preview.transparent = true;
   state.preview.opacity = 0.8;
+  state.preview.twist = 0;
   state.background = { image: null, dataUrl: null, naturalWidth: 1, naturalHeight: 1 };
   state.layers = [
     { id: "image-background", type: "image", name: "Image", opacity: 0.9, visible: true },
@@ -129,10 +133,13 @@ export function resetEverything() {
   renderLayerPanel();
   syncImageUi();
   syncZoomSlider();
+  if (state.ui.previewTwistInput) state.ui.previewTwistInput.value = "0";
   state.ui.undoButton.disabled = true;
   state.ui.redoButton.disabled = true;
   state.ui.penButton.classList.add("active");
   state.ui.lineButton.classList.remove("active");
+  if (state.ui.ellipseButton) state.ui.ellipseButton.classList.remove("active");
+  if (state.ui.rectangleButton) state.ui.rectangleButton.classList.remove("active");
   state.ui.dotButton.classList.remove("active");
   state.ui.eraseButton.classList.remove("active");
   state.ui.homButton.classList.remove("active");

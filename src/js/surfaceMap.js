@@ -6,7 +6,7 @@
 // immersions because perfect flat embeddings are mathematically impossible.
 import { TAU, clamp, determinant, dot, length } from "./math.js";
 
-export function createSurfaceMap(domain) {
+export function createSurfaceMap(domain, options = {}) {
   const metric = cellMetric(domain.surface);
   const base = {
     domain,
@@ -19,11 +19,11 @@ export function createSurfaceMap(domain) {
   };
 
   if (base.type === "plane") return withNormal({ ...base, ...createPlaneMap(metric) });
-  if (base.type === "cylinder") return withNormal({ ...base, ...createCylinderMap(domain, metric) });
-  if (base.type === "torus") return withNormal({ ...base, ...createTorusMap(domain, metric) });
-  if (base.type === "mobius") return withNormal({ ...base, ...createMobiusMap(domain, metric) });
-  if (base.type === "klein") return withNormal({ ...base, ...createKleinMap(domain, metric) });
-  return withNormal({ ...base, ...createDoubleReversedMap(domain, metric) });
+  if (base.type === "cylinder") return withNormal({ ...base, ...createCylinderMap(domain, metric, options) });
+  if (base.type === "torus") return withNormal({ ...base, ...createTorusMap(domain, metric, options) });
+  if (base.type === "mobius") return withNormal({ ...base, ...createMobiusMap(domain, metric, options) });
+  if (base.type === "klein") return withNormal({ ...base, ...createKleinMap(domain, metric, options) });
+  return withNormal({ ...base, ...createDoubleReversedMap(domain, metric, options) });
 }
 
 function cellMetric(surface) {
@@ -89,11 +89,12 @@ function createPlaneMap(metric) {
   };
 }
 
-function createCylinderMap(domain, metric) {
+function createCylinderMap(domain, metric, options = {}) {
   const repeatU = domain.topology.repeatV1;
   const linkedLength = repeatU ? metric.lenU : metric.lenV;
   const openHeight = repeatU ? metric.heightVOverU : metric.heightUOverV;
   const shear = repeatU ? metric.skewVAlongU : metric.skewUAlongV;
+  const viewTwist = Number.isFinite(options.viewTwist) ? options.viewTwist : 0;
 
   // Exact cylinder metric up to one global preview scale:
   // circumference = linkedLength * s, height = open perpendicular height * s.
@@ -108,7 +109,7 @@ function createCylinderMap(domain, metric) {
     point(u, v) {
       const loop = repeatU ? u : v;
       const open = repeatU ? v : u;
-      const theta = TAU * (loop + shear * open);
+      const theta = TAU * (loop + viewTwist + shear * open);
       const h = (open - 0.5) * height;
       const x = radius * Math.cos(theta);
       const z = radius * Math.sin(theta);
@@ -118,7 +119,7 @@ function createCylinderMap(domain, metric) {
   };
 }
 
-function createTorusMap(domain, metric) {
+function createTorusMap(domain, metric, options = {}) {
   // Metric-driven torus immersion. A perfectly flat torus cannot be embedded
   // in ordinary 3D, so R/r are chosen from the two fundamental lengths and the
   // skew is applied as a twist of the major-loop coordinate.
@@ -129,12 +130,12 @@ function createTorusMap(domain, metric) {
   const R = Math.max(0.54, (lenMajor * s) / TAU);
   const r = clamp((lenTube * s) / TAU, 0.11, Math.max(0.12, R * 0.62));
   const skew = metric.skewVAlongU;
-
+  const viewTwist = Number.isFinite(options.viewTwist) ? options.viewTwist : 0;
   return {
     metricKind: "metric-torus-immersion",
     point(u, v) {
       const theta = TAU * (u + skew * v);
-      const phi = TAU * v;
+      const phi = TAU * (v + viewTwist);
       const tube = R + r * Math.cos(phi);
       return [tube * Math.cos(theta), r * Math.sin(phi), tube * Math.sin(theta)];
     },
@@ -142,11 +143,12 @@ function createTorusMap(domain, metric) {
   };
 }
 
-function createMobiusMap(domain, metric) {
+function createMobiusMap(domain, metric, options = {}) {
   const loopU = domain.topology.repeatV1;
   const repeatLength = loopU ? metric.lenU : metric.lenV;
   const openHeight = loopU ? metric.heightVOverU : metric.heightUOverV;
   const shear = loopU ? metric.skewVAlongU : metric.skewUAlongV;
+  const viewTwist = Number.isFinite(options.viewTwist) ? options.viewTwist : 0;
 
   // A Möbius strip has no exact rectangular flat embedding in this simple
   // analytic form, but these dimensions now come from the true metric.
@@ -162,7 +164,7 @@ function createMobiusMap(domain, metric) {
       const loop = loopU ? u : v;
       const stripCoord = loopU ? v : u;
       const strip = (stripCoord - 0.5) * stripWidth;
-      const theta = TAU * (loop + shear * stripCoord);
+      const theta = TAU * (loop + viewTwist + shear * stripCoord);
       const radial = radius + strip * Math.cos(theta / 2);
       const x = radial * Math.cos(theta);
       const z = radial * Math.sin(theta);
@@ -173,14 +175,17 @@ function createMobiusMap(domain, metric) {
   };
 }
 
-function createKleinMap(domain, metric) {
+function createKleinMap(domain, metric, options = {}) {
   const reversedV1 = domain.reversedPair === "v1";
   const km = createKleinMetric(metric, reversedV1);
+  const viewTwistValue = Number.isFinite(options.viewTwist) ? options.viewTwist : 0;
 
   const map = {
+    type: "klein",
     representation: "immersion",
     metricKind: "traditional-klein-bottle-metric-immersion",
     reversedV1,
+    viewTwistValue,
     // The classical bottle formula is piecewise along the long path. Making
     // these exact mesh boundaries prevents triangles from cutting across the
     // neck/penetration transitions.
@@ -194,12 +199,21 @@ function createKleinMap(domain, metric) {
       const main = reversedV1 ? u : v;
       const ring = reversedV1 ? v : u;
       const seamSafe = Math.sin(Math.PI * clamp(main, 0, 1));
-      const adjustedRing = ring + km.skewTwist * seamSafe * seamSafe;
+      // User twist is a smooth "roll" of the tube around the Klein path.  A
+      // constant phase shift would break the reversed seam.  Using opposite
+      // phases at main=0 and main=1 preserves P(r,0)=P(1-r,1), while one full
+      // slider loop still returns to the same view.
+      const seamRespectingTwist = viewTwistValue * Math.cos(Math.PI * clamp(main, 0, 1));
+      const adjustedRing = ring + seamRespectingTwist + km.skewTwist * seamSafe * seamSafe;
       return applyKleinMetric(classicKleinBottleRawPoint(adjustedRing, main), km);
     },
     worldToModelScale: km.worldToModelScale
   };
 
+  // Keep the classical analytic immersion for the final preview.  The earlier
+  // metric-relaxation pass made the bottle locally more length-matched, but it
+  // introduced visible crumpling/wrinkling.  This map is smooth, seam-exact,
+  // and dimension-aware without adding solver artifacts.
   validateKleinSeams(map);
   return map;
 }
@@ -208,14 +222,14 @@ function createKleinMetric(metric, reversedV1) {
   const mainLength = reversedV1 ? metric.lenU : metric.lenV;
   const tubeLength = reversedV1 ? metric.heightVOverU : metric.heightUOverV;
   const skew = reversedV1 ? metric.skewVAlongU : metric.skewUAlongV;
-
-  // One global fit keeps the model comfortably visible while preserving the
-  // user-entered aspect ratio: the reversed direction controls bottle height,
-  // and the preserved perpendicular height controls tube/bulb thickness.
+  // One global preview scale comes from the actual paper dimensions. These
+  // scales are only the starting immersion; a metric-relaxation pass below
+  // adjusts the mesh so local edge lengths match the input cell metric as
+  // closely as possible while preserving the exact Klein seam identities.
   const fit = 2.55 / Math.max(mainLength, tubeLength * 2.25, 1);
-  const mainScale = mainLength * fit * 0.56;
-  const tubeScale = tubeLength * fit * 0.78;
-  const depthScale = tubeLength * fit * 0.58;
+  const mainScale = mainLength * fit * 0.50;
+  const tubeScale = tubeLength * fit * 0.50;
+  const depthScale = tubeLength * fit * 0.50;
 
   return {
     mainScale,
@@ -229,12 +243,15 @@ function createKleinMetric(metric, reversedV1) {
   };
 }
 
-function createDoubleReversedMap(domain, metric) {
+function createDoubleReversedMap(domain, metric, options = {}) {
   const pm = createProjectivePlaneMetric(metric);
+  const viewTwistValue = Number.isFinite(options.viewTwist) ? options.viewTwist : 0;
 
   const map = {
+    type: "double-reversed",
     representation: "immersion",
     metricKind: "projective-plane-double-reversed-immersion",
+    viewTwistValue,
     // The projective-plane map is smoothest when the mesh honors the square
     // and disk symmetry axes. This also makes seam and grid lines cleaner.
     pieceBreaks: {
@@ -243,12 +260,18 @@ function createDoubleReversedMap(domain, metric) {
     },
     point(u, v) {
       const disk = doubleReversedSquareToDisk(u, v);
-      const raw = projectivePlaneRawPoint(disk.x, disk.y, pm);
+      const twistAngle = TAU * viewTwistValue;
+      const dx = disk.x * Math.cos(twistAngle) - disk.y * Math.sin(twistAngle);
+      const dy = disk.x * Math.sin(twistAngle) + disk.y * Math.cos(twistAngle);
+      const raw = projectivePlaneRawPoint(dx, dy, pm);
       return applyProjectivePlaneMetric(raw, pm);
     },
     worldToModelScale: pm.worldToModelScale
   };
 
+  // Keep the smooth analytic projective-plane immersion.  Solver relaxation
+  // made the double-reversed surface wrinkly; this keeps the antipodal seams
+  // exact and the dimensions visually faithful without crumpling.
   validateProjectivePlaneSeams(map);
   return map;
 }
@@ -259,7 +282,6 @@ function createProjectivePlaneMetric(metric) {
   const fit = 2.15 / Math.max(metric.lenU, metric.lenV, avgLength * 1.2, 1);
   const baseScale = Math.max(0.28, avgLength * fit);
   const skew = 0.5 * (metric.skewVAlongU - metric.skewUAlongV);
-
   return {
     uStretch: Math.sqrt(aspect),
     vStretch: 1 / Math.sqrt(aspect),
@@ -270,6 +292,323 @@ function createProjectivePlaneMetric(metric) {
     worldToModelScale: fit
   };
 }
+
+
+const METRIC_RELAXATION_CACHE = new Map();
+const METRIC_RELAXATION_MAX_CACHE = 10;
+
+function relaxMetricMap(map, domain, metric) {
+  if (!(map.metricKind?.startsWith("traditional-klein-bottle") || map.metricKind === "projective-plane-double-reversed-immersion")) return map;
+
+  const key = metricRelaxationKey(map, domain, metric);
+  const cached = METRIC_RELAXATION_CACHE.get(key);
+  if (cached) return attachRelaxedSampler(map, cached);
+
+  const gridSize = map.type === "klein"
+    ? (map.reversedV1 ? { nx: 48, ny: 30 } : { nx: 30, ny: 48 })
+    : { nx: 40, ny: 40 };
+  const nx = gridSize.nx;
+  const ny = gridSize.ny;
+  const count = (nx + 1) * (ny + 1);
+  const initial = new Array(count);
+  const points = new Array(count);
+
+  for (let j = 0; j <= ny; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const u = i / nx;
+      const v = j / ny;
+      const p = map.point(u, v);
+      initial[idx(i, j, nx)] = [...p];
+      points[idx(i, j, nx)] = [...p];
+    }
+  }
+  enforceRelaxedSeams(points, nx, ny, map);
+
+  const relaxationScale = estimateMetricScale(points, nx, ny, metric, map.worldToModelScale || metric.globalScale || 0.003);
+  const constraints = buildMetricConstraints(nx, ny, metric, relaxationScale);
+  // The first metric-relaxation version was intentionally aggressive, but on
+  // impossible-to-embed surfaces it could satisfy local edge lengths by making
+  // tiny crumples. For a university-facing preview we prefer a smooth,
+  // low-bending immersion whose metric error is measured rather than a
+  // wrinkled pseudo-isometry. These softer constraints, a strong attraction to
+  // the analytic immersion, and explicit topological Laplacian smoothing remove
+  // the wrinkle artifacts while still making the shape respond to the input
+  // cell metric.
+  const iterations = map.type === "double-reversed" ? 62 : 58;
+  const edgeStiffness = map.type === "double-reversed" ? 0.25 : 0.28;
+  const anchorStiffness = map.type === "double-reversed" ? 0.050 : 0.055;
+  const smoothingStiffness = map.type === "double-reversed" ? 0.090 : 0.075;
+
+  for (let iteration = 0; iteration < iterations; iteration++) {
+    for (const c of constraints) applyDistanceConstraint(points, c, edgeStiffness * c.weight);
+    enforceRelaxedSeams(points, nx, ny, map);
+    applyTopologicalSmoothing(points, nx, ny, map, smoothingStiffness);
+    enforceRelaxedSeams(points, nx, ny, map);
+    applyAnchorPull(points, initial, anchorStiffness);
+    enforceRelaxedSeams(points, nx, ny, map);
+  }
+
+  for (let pass = 0; pass < 5; pass++) {
+    applyTopologicalSmoothing(points, nx, ny, map, smoothingStiffness * 0.55);
+    enforceRelaxedSeams(points, nx, ny, map);
+    applyAnchorPull(points, initial, anchorStiffness * 0.75);
+    enforceRelaxedSeams(points, nx, ny, map);
+  }
+
+  centerRelaxedPoints(points);
+  const audit = auditMetricGrid(points, constraints, nx, ny, map);
+  const relaxed = { nx, ny, points, audit, scale: relaxationScale };
+  rememberMetricRelaxation(key, relaxed);
+  return attachRelaxedSampler(map, relaxed);
+}
+
+function metricRelaxationKey(map, domain, metric) {
+  const s = metric.surface;
+  const links = s.edgeLinks || {};
+  return [
+    map.metricKind,
+    map.reversedV1 ? 1 : 0,
+    round6(map.viewTwistValue || 0),
+    round6(s.v1.x), round6(s.v1.y), round6(s.v2.x), round6(s.v2.y),
+    links.v1?.active ? 1 : 0, links.v1?.direction?.left ?? 1, links.v1?.direction?.right ?? 1,
+    links.v2?.active ? 1 : 0, links.v2?.direction?.bottom ?? 1, links.v2?.direction?.top ?? 1,
+    domain.type
+  ].join("|");
+}
+
+function rememberMetricRelaxation(key, value) {
+  if (METRIC_RELAXATION_CACHE.size >= METRIC_RELAXATION_MAX_CACHE) {
+    const oldest = METRIC_RELAXATION_CACHE.keys().next().value;
+    METRIC_RELAXATION_CACHE.delete(oldest);
+  }
+  METRIC_RELAXATION_CACHE.set(key, value);
+}
+
+function attachRelaxedSampler(map, relaxed) {
+  return {
+    ...map,
+    metricKind: `${map.metricKind}+metric-relaxed`,
+    metricAudit: relaxed.audit,
+    worldToModelScale: relaxed.scale || map.worldToModelScale,
+    point(u, v) {
+      return sampleRelaxedGrid(relaxed, clamp(u, 0, 1), clamp(v, 0, 1));
+    }
+  };
+}
+
+function estimateMetricScale(points, nx, ny, metric, fallback) {
+  let num = 0;
+  let den = 0;
+  const add = (i0, j0, i1, j1) => {
+    const p0 = points[idx(i0, j0, nx)];
+    const p1 = points[idx(i1, j1, nx)];
+    const paper = metricDistance({ u: i0 / nx, v: j0 / ny }, { u: i1 / nx, v: j1 / ny }, metric);
+    if (paper <= 1e-8) return;
+    const current = distance3(p0, p1);
+    num += current * paper;
+    den += paper * paper;
+  };
+  for (let j = 0; j <= ny; j++) for (let i = 0; i < nx; i++) add(i, j, i + 1, j);
+  for (let j = 0; j < ny; j++) for (let i = 0; i <= nx; i++) add(i, j, i, j + 1);
+  const scale = den > 0 ? num / den : fallback;
+  return clamp(scale, Math.max(0.00015, fallback * 0.35), Math.max(0.0002, fallback * 3.25));
+}
+
+function buildMetricConstraints(nx, ny, metric, scale) {
+  const constraints = [];
+  const add = (i0, j0, i1, j1, weight = 1) => {
+    const aUv = { u: i0 / nx, v: j0 / ny };
+    const bUv = { u: i1 / nx, v: j1 / ny };
+    constraints.push({
+      a: idx(i0, j0, nx),
+      b: idx(i1, j1, nx),
+      len: metricDistance(aUv, bUv, metric) * scale,
+      weight
+    });
+  };
+
+  for (let j = 0; j <= ny; j++) for (let i = 0; i < nx; i++) add(i, j, i + 1, j, 1.0);
+  for (let j = 0; j < ny; j++) for (let i = 0; i <= nx; i++) add(i, j, i, j + 1, 1.0);
+  for (let j = 0; j < ny; j++) {
+    for (let i = 0; i < nx; i++) {
+      add(i, j, i + 1, j + 1, 0.34);
+      add(i + 1, j, i, j + 1, 0.34);
+    }
+  }
+  return constraints;
+}
+
+function applyDistanceConstraint(points, c, stiffness) {
+  const a = points[c.a];
+  const b = points[c.b];
+  const dx = b[0] - a[0], dy = b[1] - a[1], dz = b[2] - a[2];
+  const d = Math.max(1e-8, Math.hypot(dx, dy, dz));
+  const diff = ((d - c.len) / d) * 0.5 * stiffness;
+  const cx = dx * diff, cy = dy * diff, cz = dz * diff;
+  a[0] += cx; a[1] += cy; a[2] += cz;
+  b[0] -= cx; b[1] -= cy; b[2] -= cz;
+}
+
+function applyAnchorPull(points, initial, stiffness) {
+  for (let i = 0; i < points.length; i++) {
+    points[i][0] += (initial[i][0] - points[i][0]) * stiffness;
+    points[i][1] += (initial[i][1] - points[i][1]) * stiffness;
+    points[i][2] += (initial[i][2] - points[i][2]) * stiffness;
+  }
+}
+
+function applyTopologicalSmoothing(points, nx, ny, map, amount) {
+  if (amount <= 0) return;
+  const before = points.map(p => [...p]);
+  for (let j = 0; j <= ny; j++) {
+    for (let i = 0; i <= nx; i++) {
+      const id = idx(i, j, nx);
+      const n = [gridNeighbor(i - 1, j, nx, ny, map), gridNeighbor(i + 1, j, nx, ny, map), gridNeighbor(i, j - 1, nx, ny, map), gridNeighbor(i, j + 1, nx, ny, map)];
+      if (n.some(item => !item)) continue;
+      const avg = [0, 0, 0];
+      for (const item of n) {
+        const p = before[idx(item.i, item.j, nx)];
+        avg[0] += p[0] * 0.25; avg[1] += p[1] * 0.25; avg[2] += p[2] * 0.25;
+      }
+      const p = points[id];
+      p[0] += (avg[0] - p[0]) * amount;
+      p[1] += (avg[1] - p[1]) * amount;
+      p[2] += (avg[2] - p[2]) * amount;
+    }
+  }
+}
+
+function gridNeighbor(i, j, nx, ny, map) {
+  if (i >= 0 && i <= nx && j >= 0 && j <= ny) return { i, j };
+  if (map.type === "klein") {
+    if (map.reversedV1) {
+      if (i < 0) return { i: nx, j: ny - clampInt(j, 0, ny) };
+      if (i > nx) return { i: 0, j: ny - clampInt(j, 0, ny) };
+      if (j < 0) return { i: clampInt(i, 0, nx), j: ny };
+      if (j > ny) return { i: clampInt(i, 0, nx), j: 0 };
+    } else {
+      if (i < 0) return { i: nx, j: clampInt(j, 0, ny) };
+      if (i > nx) return { i: 0, j: clampInt(j, 0, ny) };
+      if (j < 0) return { i: nx - clampInt(i, 0, nx), j: ny };
+      if (j > ny) return { i: nx - clampInt(i, 0, nx), j: 0 };
+    }
+  } else if (map.type === "double-reversed") {
+    if (i < 0) return { i: nx, j: ny - clampInt(j, 0, ny) };
+    if (i > nx) return { i: 0, j: ny - clampInt(j, 0, ny) };
+    if (j < 0) return { i: nx - clampInt(i, 0, nx), j: ny };
+    if (j > ny) return { i: nx - clampInt(i, 0, nx), j: 0 };
+  }
+  return null;
+}
+
+function clampInt(value, min, max) {
+  return Math.min(max, Math.max(min, value));
+}
+
+function enforceRelaxedSeams(points, nx, ny, map) {
+  const pair = (a, b) => {
+    const pa = points[a], pb = points[b];
+    const m = [(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2, (pa[2] + pb[2]) / 2];
+    pa[0] = pb[0] = m[0]; pa[1] = pb[1] = m[1]; pa[2] = pb[2] = m[2];
+  };
+  const unifyCorners = () => {
+    const ids = [idx(0, 0, nx), idx(nx, 0, nx), idx(0, ny, nx), idx(nx, ny, nx)];
+    const m = [0, 0, 0];
+    for (const id of ids) { m[0] += points[id][0] / ids.length; m[1] += points[id][1] / ids.length; m[2] += points[id][2] / ids.length; }
+    for (const id of ids) { points[id][0] = m[0]; points[id][1] = m[1]; points[id][2] = m[2]; }
+  };
+
+  // Pair constraints that meet at corners need a few projection passes because
+  // one seam can otherwise slightly disturb another. The final corner unifier
+  // makes the quotient exact at all four cell corners.
+  for (let pass = 0; pass < 5; pass++) {
+    if (map.type === "klein") {
+      if (map.reversedV1) {
+        for (let i = 0; i <= nx; i++) pair(idx(i, 0, nx), idx(i, ny, nx));
+        for (let j = 0; j <= ny; j++) pair(idx(0, j, nx), idx(nx, ny - j, nx));
+      } else {
+        for (let j = 0; j <= ny; j++) pair(idx(0, j, nx), idx(nx, j, nx));
+        for (let i = 0; i <= nx; i++) pair(idx(i, 0, nx), idx(nx - i, ny, nx));
+      }
+      unifyCorners();
+    } else if (map.type === "double-reversed") {
+      for (let j = 0; j <= ny; j++) pair(idx(0, j, nx), idx(nx, ny - j, nx));
+      for (let i = 0; i <= nx; i++) pair(idx(i, 0, nx), idx(nx - i, ny, nx));
+      unifyCorners();
+    }
+  }
+}
+
+function centerRelaxedPoints(points) {
+  const center = [0, 0, 0];
+  for (const p of points) { center[0] += p[0]; center[1] += p[1]; center[2] += p[2]; }
+  center[0] /= points.length; center[1] /= points.length; center[2] /= points.length;
+  for (const p of points) { p[0] -= center[0]; p[1] -= center[1]; p[2] -= center[2]; }
+}
+
+function sampleRelaxedGrid(relaxed, u, v) {
+  const { nx, ny, points } = relaxed;
+  const x = clamp(u, 0, 1) * nx;
+  const y = clamp(v, 0, 1) * ny;
+  const i0 = Math.min(nx - 1, Math.max(0, Math.floor(x)));
+  const j0 = Math.min(ny - 1, Math.max(0, Math.floor(y)));
+  const i1 = i0 + 1;
+  const j1 = j0 + 1;
+  const tx = x - i0;
+  const ty = y - j0;
+  const a = points[idx(i0, j0, nx)], b = points[idx(i1, j0, nx)], c = points[idx(i1, j1, nx)], d = points[idx(i0, j1, nx)];
+  return [
+    lerp(lerp(a[0], b[0], tx), lerp(d[0], c[0], tx), ty),
+    lerp(lerp(a[1], b[1], tx), lerp(d[1], c[1], tx), ty),
+    lerp(lerp(a[2], b[2], tx), lerp(d[2], c[2], tx), ty)
+  ];
+}
+
+function auditMetricGrid(points, constraints, nx, ny, map) {
+  let sum = 0, max = 0, count = 0;
+  for (const c of constraints) {
+    if (c.len <= 1e-8 || c.weight < 0.99) continue;
+    const d = distance3(points[c.a], points[c.b]);
+    const err = Math.abs(d - c.len) / c.len;
+    sum += err; max = Math.max(max, err); count++;
+  }
+  return {
+    averageStretchError: count ? sum / count : 0,
+    maxStretchError: max,
+    seamError: seamError(points, nx, ny, map)
+  };
+}
+
+function seamError(points, nx, ny, map) {
+  let max = 0;
+  const add = (a, b) => { max = Math.max(max, distance3(points[a], points[b])); };
+  if (map.type === "klein") {
+    if (map.reversedV1) {
+      for (let i = 0; i <= nx; i++) add(idx(i, 0, nx), idx(i, ny, nx));
+      for (let j = 0; j <= ny; j++) add(idx(0, j, nx), idx(nx, ny - j, nx));
+    } else {
+      for (let j = 0; j <= ny; j++) add(idx(0, j, nx), idx(nx, j, nx));
+      for (let i = 0; i <= nx; i++) add(idx(i, 0, nx), idx(nx - i, ny, nx));
+    }
+  } else if (map.type === "double-reversed") {
+    for (let j = 0; j <= ny; j++) add(idx(0, j, nx), idx(nx, ny - j, nx));
+    for (let i = 0; i <= nx; i++) add(idx(i, 0, nx), idx(nx - i, ny, nx));
+  }
+  return max;
+}
+
+function metricDistance(a, b, metric) {
+  const du = a.u - b.u;
+  const dv = a.v - b.v;
+  const g11 = metric.lenU * metric.lenU;
+  const g12 = metric.cosAngle * metric.lenU * metric.lenV;
+  const g22 = metric.lenV * metric.lenV;
+  return Math.sqrt(Math.max(0, du * du * g11 + 2 * du * dv * g12 + dv * dv * g22));
+}
+
+function idx(i, j, nx) { return j * (nx + 1) + i; }
+function lerp(a, b, t) { return a + (b - a) * t; }
+function round6(value) { return Math.round((value || 0) * 1000000) / 1000000; }
 
 function classicKleinBottleRawPoint(ring, main) {
   // Traditional self-intersecting Klein bottle, based on the classical
@@ -418,7 +757,7 @@ function validateKleinSeams(map) {
 
 let projectivePlaneValidationWarned = false;
 function validateProjectivePlaneSeams(map) {
-  if (projectivePlaneValidationWarned || map.metricKind !== "projective-plane-double-reversed-immersion") return;
+  if (projectivePlaneValidationWarned || !map.metricKind?.startsWith("projective-plane-double-reversed-immersion")) return;
   const eps = 0.0009;
   for (let i = 0; i <= 24; i++) {
     const t = i / 24;

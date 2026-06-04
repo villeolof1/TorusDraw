@@ -31,31 +31,13 @@ function setPreviewTransparency(enabled) {
   drawPreview3d();
 }
 
-function surfaceHasReversedLinks() {
-  const links = state.surface.edgeLinks || {};
-  const v1 = links.v1;
-  const v2 = links.v2;
-  return Boolean(
-    (v1?.active && v1?.direction && v1.direction.left !== v1.direction.right) ||
-    (v2?.active && v2?.direction && v2.direction.bottom !== v2.direction.top)
-  );
-}
-
 function openPreview3dWithNoticeIfNeeded() {
-  if (surfaceHasReversedLinks()) {
-    openPanel("previewWarning");
-    return;
-  }
-  openPanel("preview");
-  drawPreview3d();
-}
-
-function viewPreview3dAnyway() {
   openPanel("preview");
   drawPreview3d();
 }
 
 function togglePreview3d() {
+
   if (state.ui.preview3dPanel.classList.contains("open")) {
     state.ui.preview3dPanel.classList.remove("open");
     return;
@@ -82,10 +64,12 @@ function handleKeyDown(event) {
 
   if (code === "Digit1" || key === "1" || key === "p") chooseTool("pen");
   else if (code === "Digit2" || key === "2" || key === "l") chooseTool("line");
-  else if (code === "Digit3" || key === "3") chooseTool("dot");
-  else if (code === "Digit4" || key === "4") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
-  else if (code === "Digit5" || key === "5" || key === "v") chooseTool("pan");
-  else if (code === "Digit6" || key === "6") chooseTool("hom");
+  else if (code === "Digit3" || key === "3" || key === "o") chooseTool("ellipse");
+  else if (code === "Digit4" || key === "4" || key === "r") chooseTool("rectangle");
+  else if (code === "Digit5" || key === "5") chooseTool("dot");
+  else if (code === "Digit6" || key === "6") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
+  else if (code === "Digit7" || key === "7" || key === "v") chooseTool("pan");
+  else if (code === "Digit8" || key === "8") chooseTool("hom");
   else if (key === "e") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
   else if (key === "c" && event.shiftKey) resetEverything();
   else if (key === "c") clearDrawing();
@@ -104,6 +88,8 @@ function isTextField(el) { return el && ["INPUT", "TEXTAREA", "SELECT"].includes
 function wireToolbar() {
   state.ui.penButton.onclick = () => chooseTool("pen");
   state.ui.lineButton.onclick = () => chooseTool("line");
+  state.ui.ellipseButton.onclick = () => chooseTool("ellipse");
+  state.ui.rectangleButton.onclick = () => chooseTool("rectangle");
   state.ui.dotButton.onclick = () => chooseTool("dot");
   state.ui.eraseButton.onclick = () => chooseTool("erase");
   state.ui.homButton.onclick = () => chooseTool("hom");
@@ -117,10 +103,12 @@ function wireToolbar() {
   state.ui.imageButton.onclick = () => { renderLayerPanel(); openPanel("image"); };
   state.ui.preview3dButton.onclick = openPreview3dWithNoticeIfNeeded;
   state.ui.preview3dCloseButton.onclick = () => state.ui.preview3dPanel.classList.remove("open");
-  state.ui.preview3dWarningCloseButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
-  state.ui.preview3dWarningCancelButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
-  state.ui.preview3dWarningViewButton.onclick = viewPreview3dAnyway;
+  if (state.ui.preview3dWarningCloseButton) state.ui.preview3dWarningCloseButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
+  if (state.ui.preview3dWarningCancelButton) state.ui.preview3dWarningCancelButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
+  if (state.ui.preview3dWarningViewButton) state.ui.preview3dWarningViewButton.onclick = openPreview3dWithNoticeIfNeeded;
   if (state.ui.preview3dTransparencyInput) state.ui.preview3dTransparencyInput.onchange = e => setPreviewTransparency(e.target.checked);
+  if (state.ui.previewTwistInput) state.ui.previewTwistInput.oninput = e => { state.preview.twist = Number(e.target.value) || 0; drawPreview3d(); };
+  if (state.ui.previewTwistResetButton) state.ui.previewTwistResetButton.onclick = () => { state.preview.twist = 0; state.ui.previewTwistInput.value = "0"; drawPreview3d(); };
   state.ui.helpButton.onclick = () => openPanel("help");
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
   if (state.ui.imageLayerVisibilityButton) state.ui.imageLayerVisibilityButton.onclick = () => toggleLayerVisibility("image-background");
