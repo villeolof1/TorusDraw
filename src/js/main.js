@@ -55,6 +55,18 @@ function viewPreview3dAnyway() {
   drawPreview3d();
 }
 
+function togglePreview3d() {
+  if (state.ui.preview3dPanel.classList.contains("open")) {
+    state.ui.preview3dPanel.classList.remove("open");
+    return;
+  }
+  openPreview3dWithNoticeIfNeeded();
+}
+
+function togglePreviewTransparency() {
+  setPreviewTransparency(!(state.preview.transparent !== false));
+}
+
 function handleKeyDown(event) {
   const key = event.key.toLowerCase(), code = event.code, cmd = event.ctrlKey || event.metaKey;
   if (key === "enter" && document.activeElement === state.ui.sizeInput) return blurSizeInput();
@@ -65,6 +77,8 @@ function handleKeyDown(event) {
   if (cmd && key === "y") { event.preventDefault(); return redo(); }
   if (isTextField(event.target) || cmd) return;
   if (key === "d") { handleTemporaryDot(event, true); return; }
+  if (key === "m") { event.preventDefault(); return togglePreview3d(); }
+  if (key === "t") { event.preventDefault(); return togglePreviewTransparency(); }
 
   if (code === "Digit1" || key === "1" || key === "p") chooseTool("pen");
   else if (code === "Digit2" || key === "2" || key === "l") chooseTool("line");

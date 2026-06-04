@@ -352,12 +352,13 @@ function addDotMesh(out, object, map, domain, color) {
   }
 }
 
-function buildStrokeMesh(map, domain) {
+function buildStrokeMesh(map, domain, targetLayer = null) {
   const out = [];
   for (const object of state.objects) {
     if (!object.points || !object.points.length) continue;
     const layer = layerForObject(object);
     if (layer?.visible === false) continue;
+    if (targetLayer && (object.layerId || "layer-1") !== targetLayer.id) continue;
 
     const color = cssColorToRgba(object.color || "#111111");
     color[3] *= layer ? (layer.opacity ?? 1) : 1;
@@ -369,7 +370,11 @@ function buildStrokeMesh(map, domain) {
     }
 
     if (object.points.length < 2) continue;
-    if ((object.size || 1) > LARGE_STROKE_TEXTURE_ONLY) continue;
+
+    // Drawings are now depth-resolved as real 3D overlay geometry instead of
+    // being baked into the surface texture. This keeps transparent previews
+    // from letting a far-side upper layer appear in front of a near-side lower
+    // layer. Do not skip large strokes here; they still need 3D depth.
     const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
     const paths = domain.splitPolylineByGluing(uvPoints);
     const halfWidth = strokeHalfWidth(object, map);
@@ -480,13 +485,9 @@ function buildCellTextureSignature(domain) {
 }
 
 function ensureCellTexture(domain) {
-  const hasPaint = state.objects.some(object => {
-    const layer = layerForObject(object);
-    return layer?.visible !== false && (layer?.opacity ?? 1) > 0;
-  });
   const imageLayer = layerByType("image");
   const hasImage = !!state.background.image && imageLayer?.visible !== false && (imageLayer?.opacity ?? 1) > 0;
-  if (!hasPaint && !hasImage) {
+  if (!hasImage) {
     cachedTextureSignature = "";
     cachedBackgroundImage = null;
     cachedTextureCanvas = null;
@@ -519,13 +520,11 @@ function buildCompositeCellCanvas(domain) {
   ctx.fillStyle = "#fffdf8";
   ctx.fillRect(0, 0, cellCanvas.width, cellCanvas.height);
 
-  const layers = Array.isArray(state.layers) && state.layers.length ? state.layers : [{ id: "layer-1", type: "drawing", opacity: 1, visible: true }];
-  for (const layer of layers) {
-    if (layer.visible === false || (layer.opacity ?? 1) <= 0) continue;
+  const image = layerByType("image");
+  if (image && image.visible !== false && (image.opacity ?? 1) > 0 && state.background.image) {
     ctx.save();
-    ctx.globalAlpha = layer.opacity ?? 1;
-    if (layer.type === "image" && state.background.image) drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height, false);
-    if (layer.type === "drawing") drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height, layer);
+    ctx.globalAlpha = image.opacity ?? 1;
+    drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height, false);
     ctx.restore();
   }
   return cellCanvas;
@@ -658,7 +657,8 @@ export function drawPreview3d() {
   const map = createSurfaceMap(domain);
   const surface = buildSurfaceMesh(map);
   const grid = buildGridMesh(map, domain);
-  const strokes = buildStrokeMesh(map, domain);
+  const drawingLayers = (state.layers || []).filter(layer => layer.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0);
+  const strokeMeshes = drawingLayers.map(layer => buildStrokeMesh(map, domain, layer));
   const tex = ensureCellTexture(domain);
 
   gl.viewport(0, 0, canvas.width, canvas.height);
@@ -695,8 +695,14 @@ export function drawPreview3d() {
   gl.depthMask(!translucentSurface);
   drawMesh(grid, { useTexture: false, lighting: false });
 
-  gl.depthMask(false);
-  drawMesh(strokes, { useTexture: false, lighting: false });
+  // Strokes are rendered after the surface as real 3D geometry, layer by
+  // layer. Depth writing is intentionally ON. This preserves normal layer
+  // order when marks are on the same area, but lets true 3D depth win when
+  // one mark is on the far side of a transparent model.
+  gl.depthMask(true);
+  for (const mesh of strokeMeshes) {
+    drawMesh(mesh, { useTexture: false, lighting: false });
+  }
   gl.depthMask(true);
   updateSummary(map);
 }

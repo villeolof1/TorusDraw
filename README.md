@@ -286,3 +286,11 @@ Rub eraser now samples line objects into dense paths before cutting, so it can r
 ## Latest dot rub eraser fix
 
 Dot rub erasing now treats dots as circular outline paths rather than filled disks. Each sampled outline point gets its own surface coordinates, preventing the strange collapsed/warped behavior from the previous version. Object erasing still removes a whole dot when desired.
+
+## Latest 3D depth/layer fix
+
+The 3D preview now separates image/background texture from drawing overlays. Drawing layers are rendered as true 3D stroke geometry, layer by layer, with depth writing enabled. This preserves layer order when marks are on the same surface area, but lets actual 3D depth win when one mark is on the far side of a transparent model.
+
+## Latest 3D shortcut update
+
+The 3D model preview now uses `M` as its shortcut. The 3D transparent/opaque mode can be toggled with `T`. Tooltips and the Help panel list both shortcuts.
