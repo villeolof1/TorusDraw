@@ -68,10 +68,10 @@ function handleKeyDown(event) {
 
   if (code === "Digit1" || key === "1" || key === "p") chooseTool("pen");
   else if (code === "Digit2" || key === "2" || key === "l") chooseTool("line");
-  else if (code === "Digit6" || key === "6") chooseTool("dot");
-  else if (code === "Digit3" || key === "3") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
-  else if (code === "Digit4" || key === "4" || key === "v") chooseTool("pan");
-  else if (code === "Digit5" || key === "5") chooseTool("hom");
+  else if (code === "Digit3" || key === "3") chooseTool("dot");
+  else if (code === "Digit4" || key === "4") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
+  else if (code === "Digit5" || key === "5" || key === "v") chooseTool("pan");
+  else if (code === "Digit6" || key === "6") chooseTool("hom");
   else if (key === "e") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
   else if (key === "c" && event.shiftKey) resetEverything();
   else if (key === "c") clearDrawing();

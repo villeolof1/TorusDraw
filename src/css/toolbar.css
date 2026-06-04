@@ -1,7 +1,9 @@
 /* Floating control groups. The old single giant toolbar is split into small, calm islands. */
 #toolbar,
 #topActions,
+#fileActions,
 #sideLauncher,
+#navigationTools,
 #zoomRail,
 #status,
 .floating-help-button,
@@ -27,14 +29,36 @@
   white-space: nowrap;
 }
 
+#fileActions {
+  right: 22px;
+  top: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
 #toolbar {
   left: 50%;
   bottom: 22px;
-  transform: translateX(-50%);
+  transform: translateX(calc(-50% - 22px));
   display: flex;
   align-items: center;
   gap: 8px;
   max-width: calc(100vw - 32px);
+  padding: 8px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+#navigationTools {
+  left: calc(50% + 270px);
+  bottom: 22px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
   padding: 8px;
   border-radius: 999px;
   white-space: nowrap;
@@ -129,9 +153,11 @@
 #angleHint.visible { opacity: 1; }
 
 @media (max-width: 1160px) {
-  #toolbar { left: 12px; right: 12px; bottom: 12px; transform: none; overflow-x: auto; justify-content: flex-start; border-radius: 24px; }
-  #toolbar::-webkit-scrollbar, #topActions::-webkit-scrollbar { display: none; }
-  #topActions { left: 12px; right: 12px; transform: none; overflow-x: auto; justify-content: flex-start; border-radius: 24px; }
+  #toolbar { left: 12px; right: 108px; bottom: 12px; transform: none; overflow-x: auto; justify-content: flex-start; border-radius: 24px; }
+  #toolbar::-webkit-scrollbar, #topActions::-webkit-scrollbar, #fileActions::-webkit-scrollbar { display: none; }
+  #topActions { left: 12px; right: auto; transform: none; overflow-x: auto; justify-content: flex-start; border-radius: 24px; }
+  #fileActions { right: 12px; top: 22px; overflow-x: auto; border-radius: 24px; }
+  #navigationTools { right: 12px; left: auto; bottom: 12px; }
   #sideLauncher { left: 12px; bottom: 12px; }
   .floating-help-button, .floating-shape-button { right: 12px; }
   #status { top: 72px; }

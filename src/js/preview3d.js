@@ -294,20 +294,86 @@ function densifyUvPath(points, maxStep = 0.035) {
   return dense;
 }
 
+function uvDeltaForWorldDelta(dx, dy) {
+  const v1 = state.surface.v1;
+  const v2 = state.surface.v2;
+  const det = v1.x * v2.y - v1.y * v2.x;
+  if (Math.abs(det) < 0.000001) return { u: 0, v: 0 };
+  return {
+    u: (dx * v2.y - dy * v2.x) / det,
+    v: (v1.x * dy - v1.y * dx) / det
+  };
+}
+
+function dotRingUvPath(center, object) {
+  const radius = Math.max(0.5, (object.size || 20) / 2);
+  const segments = 72;
+  const points = [];
+  for (let i = 0; i <= segments; i++) {
+    const angle = (Math.PI * 2 * i) / segments;
+    const delta = uvDeltaForWorldDelta(Math.cos(angle) * radius, Math.sin(angle) * radius);
+    points.push({ u: center.u + delta.u, v: center.v + delta.v });
+  }
+  return points;
+}
+
+function dotOutlineHalfWidth(object, map) {
+  const outlineWorld = Math.max(1, (object.size || 20) * 0.13);
+  return clamp(outlineWorld * (map.worldToModelScale || 0.003) * 0.5, 0.0045, 0.045);
+}
+
+function addDotMesh(out, object, map, domain, color) {
+  const centers = objectUvPoints(object, domain);
+  if (!centers.length || color[3] <= 0) return;
+  const halfWidth = dotOutlineHalfWidth(object, map);
+
+  // A dot can cross a glued cell border. A single ring near u=0/u=1 or
+  // v=0/v=1 can otherwise be clipped by the fundamental-domain split. We draw
+  // small neighboring lifted copies too, then let the domain splitter/normalizer
+  // decide which pieces belong on the visible surface. This is especially
+  // important for torus/cylinder/Möbius/Klein seams.
+  const uCopies = domain.topology?.repeatV1 ? [-1, 0, 1] : [0];
+  const vCopies = domain.topology?.repeatV2 ? [-1, 0, 1] : [0];
+
+  for (const rawCenter of centers) {
+    for (const du of uCopies) {
+      for (const dv of vCopies) {
+        const center = { u: rawCenter.u + du, v: rawCenter.v + dv };
+        const ring = dotRingUvPath(center, object);
+        const paths = domain.splitPolylineByGluing(ring);
+        for (const path of paths) {
+          if (path.length < 2) continue;
+          // Lift dots a bit more than strokes so the outline is not hidden by
+          // the surface or by coincident seam geometry.
+          pushRibbon(out, path, map, halfWidth, 0.010, color);
+        }
+      }
+    }
+  }
+}
+
 function buildStrokeMesh(map, domain) {
   const out = [];
   for (const object of state.objects) {
-    if (!object.points || object.points.length < 2) continue;
+    if (!object.points || !object.points.length) continue;
     const layer = layerForObject(object);
     if (layer?.visible === false) continue;
-    if (object.type === "dot") continue;
+
+    const color = cssColorToRgba(object.color || "#111111");
+    color[3] *= layer ? (layer.opacity ?? 1) : 1;
+    if (color[3] <= 0) continue;
+
+    if (object.type === "dot") {
+      addDotMesh(out, object, map, domain, color);
+      continue;
+    }
+
+    if (object.points.length < 2) continue;
     if ((object.size || 1) > LARGE_STROKE_TEXTURE_ONLY) continue;
     const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
     const paths = domain.splitPolylineByGluing(uvPoints);
-    const color = cssColorToRgba(object.color || "#111111");
-    color[3] *= layer ? (layer.opacity ?? 1) : 1;
     const halfWidth = strokeHalfWidth(object, map);
-    if (halfWidth == null || color[3] <= 0) continue;
+    if (halfWidth == null) continue;
     for (const path of paths) {
       if (path.length < 2) continue;
       pushRibbon(out, path, map, halfWidth, 0.0014, color);
@@ -523,14 +589,22 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
     ctx.lineJoin = "round";
 
     if (object.type === "dot") {
-      ctx.lineWidth = Math.max(1, (object.size || 8) * pixelsPerWorld * 0.13);
-      const radius = Math.max(1, (object.size || 8) * pixelsPerWorld / 2);
+      ctx.lineWidth = Math.max(1, (object.size || 20) * pixelsPerWorld * 0.13);
+      const radius = Math.max(1, (object.size || 20) * pixelsPerWorld / 2);
+      const uCopies = domain.topology?.repeatV1 ? [-1, 0, 1] : [0];
+      const vCopies = domain.topology?.repeatV2 ? [-1, 0, 1] : [0];
+
       for (const rawUv of objectUvPoints(object, domain)) {
         const uv = domain.normalizeUV ? domain.normalizeUV(rawUv) : rawUv;
-        const point = texturePoint(uv, width, height);
-        ctx.beginPath();
-        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
-        ctx.stroke();
+        if (!uv) continue;
+        for (const du of uCopies) {
+          for (const dv of vCopies) {
+            const point = texturePointRaw({ u: uv.u + du, v: uv.v + dv }, width, height);
+            ctx.beginPath();
+            ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+            ctx.stroke();
+          }
+        }
       }
       ctx.restore();
       continue;
@@ -569,6 +643,10 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
 
 function texturePoint(uv, width, height) {
   return { x: clamp(uv.u, 0, 1) * width, y: (1 - clamp(uv.v, 0, 1)) * height };
+}
+
+function texturePointRaw(uv, width, height) {
+  return { x: uv.u * width, y: (1 - uv.v) * height };
 }
 
 export function drawPreview3d() {

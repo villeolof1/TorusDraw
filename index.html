@@ -12,7 +12,7 @@
   <main id="app">
     <canvas id="drawingCanvas" aria-label="Infinite torus drawing canvas"></canvas>
 
-    <section id="topActions" aria-label="History and file actions">
+    <section id="topActions" aria-label="History actions">
       <div class="tool-group compact-actions">
         <button id="undoButton" class="ghost-button" title="Undo — Ctrl/Cmd+Z">Undo</button>
         <button id="redoButton" class="ghost-button" title="Redo — Ctrl/Cmd+Shift+Z or Ctrl/Cmd+Y">Redo</button>
@@ -21,9 +21,9 @@
       <div class="divider"></div>
 
       <button id="clearButton" class="ghost-button danger" title="Clear — C">Clear</button>
+    </section>
 
-      <div class="divider file-divider"></div>
-
+    <section id="fileActions" aria-label="File actions">
       <button id="exportButton" class="ghost-button" title="Export current view as PNG">Export</button>
       <button id="saveProjectButton" class="ghost-button" title="Save editable project — Ctrl/Cmd+S">Save</button>
       <label class="upload-button" title="Open editable project">
@@ -53,15 +53,18 @@
       <div class="tool-group primary-tools">
         <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
         <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
-        <button id="dotButton" class="tool-button" title="Dot — 6. Hold D for one temporary dot.">Dot</button>
-        <button id="eraseButton" class="tool-button" title="Erase — 3 or E. Shift+3 toggles eraser mode. Shift+E also works.">Erase</button>
+        <button id="dotButton" class="tool-button" title="Dot — 3. Hold D for one temporary dot.">Dot</button>
+        <button id="eraseButton" class="tool-button" title="Erase — 4 or E. Shift+4 toggles eraser mode. Shift+E also works.">Erase</button>
         <div id="eraserOptions" class="tool-group eraser-options" hidden>
           <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
           <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
         </div>
-        <button id="panButton" class="tool-button" title="Pan — 4 or V. Hold Space for temporary pan.">Pan</button>
-        <button id="homButton" class="tool-button" title="Homology — 5. Click a stroke to inspect its cell displacement.">Hom</button>
       </div>
+    </section>
+
+    <section id="navigationTools" aria-label="View and analysis tools">
+      <button id="panButton" class="tool-button" title="Pan — 5 or V. Hold Space for temporary pan.">Pan</button>
+      <button id="homButton" class="tool-button" title="Homology — 6. Click a stroke to inspect its cell displacement.">Hom</button>
     </section>
 
     <section id="surfacePanel" class="panel" aria-label="Surface controls">
@@ -210,12 +213,12 @@
       <div class="shortcut-grid">
         <div><kbd>1</kbd> / <kbd>P</kbd></div><div>Pen</div>
         <div><kbd>2</kbd> / <kbd>L</kbd></div><div>Line</div>
-        <div><kbd>3</kbd> / <kbd>E</kbd></div><div>Erase</div>
-        <div><kbd>Shift+3</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
-        <div><kbd>4</kbd> / <kbd>V</kbd></div><div>Pan</div>
-        <div><kbd>5</kbd></div><div>Homology tool</div>
-        <div><kbd>6</kbd></div><div>Dot tool</div>
+        <div><kbd>3</kbd></div><div>Dot tool</div>
         <div><kbd>Hold D</kbd></div><div>Temporary dot</div>
+        <div><kbd>4</kbd> / <kbd>E</kbd></div><div>Erase</div>
+        <div><kbd>Shift+4</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
+        <div><kbd>5</kbd> / <kbd>V</kbd></div><div>Pan</div>
+        <div><kbd>6</kbd></div><div>Homology tool</div>
         <div><kbd>Shift</kbd></div><div>Line snap, 15°</div>
         <div><kbd>Alt</kbd></div><div>Line from center</div>
         <div><kbd>Space</kbd></div><div>Temporary pan</div>

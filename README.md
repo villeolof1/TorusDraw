@@ -262,3 +262,19 @@ This version fixes the image/background opacity control so it updates the fixed 
 ## Latest 3D transparency toggle update
 
 The 3D preview now uses a simple Transparent model toggle instead of the opacity slider. The toggle is on by default. When it is off, the model is fully opaque; when it is on, the model uses the app's subtle transparent preview setting.
+
+## Latest layout and shortcut update
+
+Export, Save, and Open now live in their own top-right file bar, separate from Undo, Redo, and Clear. Pan and Hom are now in a separate small bottom tool bar to the right of the main drawing tool bar.
+
+Tool shortcuts now follow the visible order:
+- `1` Pen
+- `2` Line
+- `3` Dot
+- `4` Erase
+- `5` Pan
+- `6` Hom
+
+## Latest dot seam fix
+
+This version moves the main bottom toolbar slightly left and improves 3D dot rendering. Dot outlines are now rendered as surface-following rings, lifted above the surface to avoid z-fighting, and duplicated across linked seams before splitting so dots that cross cell borders are less likely to appear cut off or buried.
