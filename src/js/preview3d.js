@@ -28,6 +28,13 @@ const OPEN_BOUNDARY_COLOR = [0.04, 0.04, 0.04, 0.58];
 const LINKED_SEAM_COLOR = [0.08, 0.08, 0.08, 0.22];
 const DEFAULT_SURFACE_OPACITY = 1.0;
 
+// Drawing overlays are real 3D geometry. These tiny lifts separate coincident
+// marks so layer order is stable where strokes overlap on the same surface
+// area, without being large enough to make far-side marks jump in front.
+const STROKE_BASE_LIFT = 0.0022;
+const STROKE_LAYER_LIFT = 0.0032;
+const STROKE_OBJECT_LIFT = 0.00022;
+
 export function initPreview3d() {
   canvas = state.ui.preview3dCanvas;
   gl = canvas.getContext("webgl", { antialias: true, alpha: false }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
@@ -322,7 +329,7 @@ function dotOutlineHalfWidth(object, map) {
   return clamp(outlineWorld * (map.worldToModelScale || 0.003) * 0.5, 0.0045, 0.045);
 }
 
-function addDotMesh(out, object, map, domain, color) {
+function addDotMesh(out, object, map, domain, color, liftOffset = 0) {
   const centers = objectUvPoints(object, domain);
   if (!centers.length || color[3] <= 0) return;
   const halfWidth = dotOutlineHalfWidth(object, map);
@@ -345,15 +352,17 @@ function addDotMesh(out, object, map, domain, color) {
           if (path.length < 2) continue;
           // Lift dots a bit more than strokes so the outline is not hidden by
           // the surface or by coincident seam geometry.
-          pushRibbon(out, path, map, halfWidth, 0.010, color);
+          pushRibbon(out, path, map, halfWidth, 0.010 + liftOffset, color);
         }
       }
     }
   }
 }
 
-function buildStrokeMesh(map, domain, targetLayer = null) {
+function buildStrokeMesh(map, domain, targetLayer = null, layerLift = 0) {
   const out = [];
+  let objectOrdinal = 0;
+
   for (const object of state.objects) {
     if (!object.points || !object.points.length) continue;
     const layer = layerForObject(object);
@@ -364,24 +373,26 @@ function buildStrokeMesh(map, domain, targetLayer = null) {
     color[3] *= layer ? (layer.opacity ?? 1) : 1;
     if (color[3] <= 0) continue;
 
+    const objectLift = STROKE_BASE_LIFT + layerLift + objectOrdinal * STROKE_OBJECT_LIFT;
+    objectOrdinal++;
+
     if (object.type === "dot") {
-      addDotMesh(out, object, map, domain, color);
+      addDotMesh(out, object, map, domain, color, objectLift);
       continue;
     }
 
     if (object.points.length < 2) continue;
 
-    // Drawings are now depth-resolved as real 3D overlay geometry instead of
-    // being baked into the surface texture. This keeps transparent previews
-    // from letting a far-side upper layer appear in front of a near-side lower
-    // layer. Do not skip large strokes here; they still need 3D depth.
+    // Drawings are depth-resolved as real 3D overlay geometry. A tiny
+    // layer/object lift prevents z-fighting when thick colored strokes occupy
+    // the same surface area, while true 3D depth still wins for far-side marks.
     const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
     const paths = domain.splitPolylineByGluing(uvPoints);
     const halfWidth = strokeHalfWidth(object, map);
     if (halfWidth == null) continue;
     for (const path of paths) {
       if (path.length < 2) continue;
-      pushRibbon(out, path, map, halfWidth, 0.0014, color);
+      pushRibbon(out, path, map, halfWidth, 0.0014 + objectLift, color);
     }
   }
   return new Float32Array(out);
@@ -658,7 +669,7 @@ export function drawPreview3d() {
   const surface = buildSurfaceMesh(map);
   const grid = buildGridMesh(map, domain);
   const drawingLayers = (state.layers || []).filter(layer => layer.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0);
-  const strokeMeshes = drawingLayers.map(layer => buildStrokeMesh(map, domain, layer));
+  const strokeMeshes = drawingLayers.map((layer, index) => buildStrokeMesh(map, domain, layer, index * STROKE_LAYER_LIFT));
   const tex = ensureCellTexture(domain);
 
   gl.viewport(0, 0, canvas.width, canvas.height);

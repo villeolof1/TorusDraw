@@ -294,3 +294,7 @@ The 3D preview now separates image/background texture from drawing overlays. Dra
 ## Latest 3D shortcut update
 
 The 3D model preview now uses `M` as its shortcut. The 3D transparent/opaque mode can be toggled with `T`. Tooltips and the Help panel list both shortcuts.
+
+## Latest 3D overlap/order fix
+
+Thick overlapping strokes in the 3D preview now get tiny layer/object lift offsets along the surface normal. This reduces z-fighting and visual squashing when colored strokes intersect on the same surface area, while still preserving true 3D depth for far-side marks on transparent models.
