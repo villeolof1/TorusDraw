@@ -6,7 +6,7 @@ export function collectDom() {
     "drawingCanvas", "penButton", "lineButton", "dotButton", "eraseButton", "panButton", "eraserOptions",
     "eraseObjectButton", "eraseRubButton", "homButton", "undoButton", "redoButton", "clearButton", "colorInput",
     "sizeInput", "sizeBlock", "surfaceButton", "imageButton", "preview3dButton", "exportButton",
-    "saveProjectButton", "projectInput", "surfacePanel", "imagePanel", "imageCloseButton", "imageSummary", "addLayerButton", "layerList", "selectedLayerName", "imageLayerCard", "imageLayerThumb", "imageLayerStatus", "imageLayerVisibilityButton", "layerOpacityInput", "layerOpacityValue", "layerVisibleButton", "deleteLayerButton", "moveLayerUpButton", "moveLayerDownButton",
+    "saveProjectButton", "projectInput", "surfacePanel", "imagePanel", "imageCloseButton", "imageSummary", "addLayerButton", "layerList", "imageLayerCard", "imageLayerThumb", "imageLayerStatus", "imageLayerVisibilityButton", "moveLayerUpButton", "moveLayerDownButton",
     "preview3dPanel", "preview3dCloseButton", "preview3dSummary", "preview3dTransparencyInput", "preview3dWarningPanel", "preview3dWarningCloseButton", "preview3dWarningCancelButton", "preview3dWarningViewButton", "helpPanel", "helpButton",
     "a1Input", "b1Input", "a2Input", "b2Input", "repeatV1Input", "repeatV2Input",
     "edgeDiagram", "edgeStatus", "removeV1LinkButton", "removeV2LinkButton", "hideGridInput", "resetSurfaceButton", "centerViewButton", "fitCellButton", "updateSurfaceButton", "presetDefaultButton", "presetSquareButton", "presetRhombusButton", "presetGoldenButton",

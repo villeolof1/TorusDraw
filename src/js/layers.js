@@ -133,9 +133,23 @@ export function setSelectedLayerOpacity(value) {
   drawPreview3d();
 }
 
-export function removeSelectedLayer() {
-  const layer = activeLayer();
-  if (!layer || layer.type !== "drawing") return;
+export function setLayerOpacity(layerId, value) {
+  const layer = state.layers.find(item => item.id === layerId && item.type === "drawing");
+  if (!layer) return;
+  layer.opacity = Math.max(0, Math.min(1, Number(value) / 100 || 0));
+  const row = [...(state.ui.layerList?.querySelectorAll(".layer-row") || [])].find(item => item.dataset.layerId === layerId);
+  if (row) {
+    const percent = row.querySelector(".layer-percent");
+    if (percent) percent.textContent = `${Math.round(layer.opacity * 100)}%`;
+  }
+  scheduleAutosave();
+  requestRender();
+  drawPreview3d();
+}
+
+export function removeLayer(layerId) {
+  const layer = state.layers.find(item => item.id === layerId && item.type === "drawing");
+  if (!layer) return;
   const drawingLayers = state.layers.filter(item => item.type === "drawing");
   if (drawingLayers.length <= 1) {
     showStatus("Keep at least one drawing layer.");
@@ -143,14 +157,22 @@ export function removeSelectedLayer() {
   }
 
   const before = snapshotLayers();
-  state.layers = state.layers.filter(item => item.id !== layer.id);
-  state.objects = state.objects.filter(object => object.layerId !== layer.id);
-  state.activeLayerId = (state.layers.findLast?.(item => item.type === "drawing") || state.layers.find(item => item.type === "drawing"))?.id;
+  state.layers = state.layers.filter(item => item.id !== layerId);
+  state.objects = state.objects.filter(object => object.layerId !== layerId);
+  if (state.activeLayerId === layerId) {
+    state.activeLayerId = (state.layers.findLast?.(item => item.type === "drawing") || state.layers.find(item => item.type === "drawing"))?.id;
+  }
 
   commitLayerSnapshot(before);
   renderLayerPanel();
   requestRender();
   drawPreview3d();
+}
+
+export function removeSelectedLayer() {
+  const layer = activeLayer();
+  if (!layer || layer.type !== "drawing") return;
+  removeLayer(layer.id);
 }
 
 export function removeImageLayer() {
@@ -292,7 +314,6 @@ export function renderLayerPanel(updateThumbnails = true) {
   if (!state.ui.layerList) return;
   ensureLayerModel();
 
-  const active = activeLayer();
   state.ui.layerList.innerHTML = "";
   const visualLayers = state.layers.filter(layer => layer.type === "drawing").reverse();
 
@@ -303,30 +324,41 @@ export function renderLayerPanel(updateThumbnails = true) {
     row.className = `layer-row ${layer.id === state.activeLayerId ? "active" : ""} ${layer.visible === false ? "hidden-layer" : ""}`;
     row.dataset.layerId = layer.id;
     row.dataset.visualIndex = String(visualIndex);
+    const percent = Math.round((layer.opacity ?? 1) * 100);
     row.innerHTML = `
-      <span class="layer-thumb"></span>
-      <span class="layer-name">${escapeHtml(layer.name || "Layer")}</span>
-      <span class="layer-percent">${Math.round((layer.opacity ?? 1) * 100)}%</span>
-      <button class="layer-eye" type="button" title="Hide/show">${layer.visible === false ? "○" : "●"}</button>
+      <div class="layer-card-main">
+        <span class="layer-thumb"></span>
+        <span class="layer-name">${escapeHtml(layer.name || "Layer")}</span>
+        <span class="layer-percent">${percent}%</span>
+        <button class="layer-eye ${layer.visible === false ? "is-hidden" : "is-visible"}" type="button" title="${layer.visible === false ? "Show layer" : "Hide layer"}" aria-label="${layer.visible === false ? "Show layer" : "Hide layer"}"><span class="eye-icon"></span></button>
+        <button class="layer-delete" type="button" title="Delete layer" aria-label="Delete layer">🗑</button>
+      </div>
+      <input class="layer-opacity-slider" type="range" min="0" max="100" value="${percent}" aria-label="Layer opacity" />
     `;
     row.onclick = event => {
-      if (event.target.classList.contains("layer-eye")) return;
+      if (event.target.closest(".layer-control, .layer-eye, .layer-delete, .layer-opacity-slider")) return;
       selectLayer(layer.id);
     };
     row.onpointerdown = event => startLayerPress(event, layer.id);
+
     row.querySelector(".layer-eye").onclick = event => {
       event.stopPropagation();
       toggleLayerVisibility(layer.id);
     };
+
+    row.querySelector(".layer-delete").onclick = event => {
+      event.stopPropagation();
+      removeLayer(layer.id);
+    };
+
+    const slider = row.querySelector(".layer-opacity-slider");
+    slider.oninput = event => setLayerOpacity(layer.id, event.target.value);
+    slider.onpointerdown = event => event.stopPropagation();
+    slider.onclick = event => event.stopPropagation();
+
     state.ui.layerList.appendChild(row);
     if (updateThumbnails) renderThumbnailInto(row.querySelector(".layer-thumb"), layer);
   });
-
-  if (state.ui.selectedLayerName) state.ui.selectedLayerName.textContent = active ? active.name : "No layer";
-  if (state.ui.layerOpacityInput) state.ui.layerOpacityInput.value = String(Math.round((active?.opacity ?? 1) * 100));
-  if (state.ui.layerOpacityValue) state.ui.layerOpacityValue.textContent = `${Math.round((active?.opacity ?? 1) * 100)}%`;
-  if (state.ui.layerVisibleButton) state.ui.layerVisibleButton.textContent = active?.visible === false ? "Show" : "Hide";
-  if (state.ui.deleteLayerButton) state.ui.deleteLayerButton.textContent = "Remove layer";
 }
 
 function renderImageLayerCard() {
@@ -340,28 +372,22 @@ function renderImageLayerCard() {
   }
   if (state.ui.imageLayerVisibilityButton) {
     state.ui.imageLayerVisibilityButton.textContent = layer.visible === false ? "Show" : "Hide";
+    state.ui.imageLayerVisibilityButton.title = layer.visible === false ? "Show image layer" : "Hide image layer";
   }
   if (state.ui.imageLayerThumb) renderThumbnailInto(state.ui.imageLayerThumb, layer);
 }
 
 function startLayerPress(event, layerId) {
-  if (event.button !== 0 || event.target.classList.contains("layer-eye")) return;
+  if (event.button !== 0 || event.target.closest(".layer-control, .layer-eye, .layer-delete, .layer-opacity-slider")) return;
   const row = event.currentTarget;
   const list = state.ui.layerList;
   if (!list || !row) return;
   event.preventDefault();
 
   // Mark it active without re-rendering the list. Re-rendering here would
-  // destroy the DOM node that is being dragged, which makes the card appear
-  // to stay in place until release.
+  // destroy the DOM node that is being dragged.
   state.activeLayerId = layerId;
   [...list.querySelectorAll(".layer-row")].forEach(item => item.classList.toggle("active", item.dataset.layerId === layerId));
-  if (state.ui.selectedLayerName) {
-    const layer = state.layers.find(item => item.id === layerId);
-    state.ui.selectedLayerName.textContent = layer ? layer.name : "Layer";
-    if (state.ui.layerOpacityInput) state.ui.layerOpacityInput.value = String(Math.round((layer?.opacity ?? 1) * 100));
-    if (state.ui.layerOpacityValue) state.ui.layerOpacityValue.textContent = `${Math.round((layer?.opacity ?? 1) * 100)}%`;
-  }
 
   const start = { x: event.clientX, y: event.clientY };
   let dragging = false;
@@ -412,9 +438,6 @@ function startLayerPress(event, layerId) {
     const dy = e.clientY - start.y;
     if (!dragging && Math.hypot(dx, dy) > 4) beginDrag(e);
     if (!dragging) return;
-
-    // Directly position the floating card under the pointer. This feels
-    // physical and avoids the old "stays in place until release" behavior.
     ghost.style.left = `${e.clientX - grabOffset.x}px`;
     ghost.style.top = `${e.clientY - grabOffset.y}px`;
     movePlaceholder(e.clientY);

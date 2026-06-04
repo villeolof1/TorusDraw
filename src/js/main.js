@@ -7,7 +7,7 @@ import { drawPreview3d, initPreview3d, resetPreviewAngle } from "./preview3d.js"
 import { requestRender, resizeCanvas } from "./render2d.js";
 import { applySurface, applySurfacePreset, centerView, exportPNG, fitCellToView, fitSurfaceToImage, loadImageFile, readSurfaceControls, removeImage, resetSurface, setImageFitMode, setImageOpacity, setZoom, sliderToZoom, syncImageUi, syncZoomSlider, syncEdgeUi, toggleEdgePair, writeSurfaceControls } from "./surface.js";
 import { openProjectFile, resetEverything, restoreAutosave, saveProject, scheduleAutosave } from "./storage.js";
-import { addDrawingLayer, ensureLayerModel, moveSelectedLayer, removeSelectedLayer, renderLayerPanel, setSelectedLayerOpacity, toggleLayerVisibility, activeLayer } from "./layers.js";
+import { addDrawingLayer, ensureLayerModel, moveSelectedLayer, renderLayerPanel, toggleLayerVisibility } from "./layers.js";
 
 collectDom();
 ensureLayerModel();
@@ -125,14 +125,6 @@ function wireToolbar() {
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
   if (state.ui.imageLayerVisibilityButton) state.ui.imageLayerVisibilityButton.onclick = () => toggleLayerVisibility("image-background");
   state.ui.addLayerButton.onclick = () => addDrawingLayer();
-  state.ui.layerOpacityInput.oninput = e => setSelectedLayerOpacity(e.target.value);
-  state.ui.layerOpacityInput.addEventListener("pointerdown", e => e.stopPropagation());
-  state.ui.layerOpacityInput.addEventListener("click", e => e.stopPropagation());
-  state.ui.layerVisibleButton.onclick = () => {
-    const layer = activeLayer();
-    if (layer) toggleLayerVisibility(layer.id);
-  };
-  state.ui.deleteLayerButton.onclick = removeSelectedLayer;
   state.ui.moveLayerUpButton.onclick = () => moveSelectedLayer(1);
   state.ui.moveLayerDownButton.onclick = () => moveSelectedLayer(-1);
   state.ui.exportButton.onclick = exportPNG;

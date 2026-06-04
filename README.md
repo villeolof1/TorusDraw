@@ -298,3 +298,13 @@ The 3D model preview now uses `M` as its shortcut. The 3D transparent/opaque mod
 ## Latest 3D overlap/order fix
 
 Thick overlapping strokes in the 3D preview now get tiny layer/object lift offsets along the surface normal. This reduces z-fighting and visual squashing when colored strokes intersect on the same surface area, while still preserving true 3D depth for far-side marks on transparent models.
+
+## Latest layer-card controls and save/restore update
+
+The Layers panel now puts show/hide, delete, and opacity directly on each drawing-layer card. The old separate selected-layer control area has been removed to save space. The visibility control now uses an eye-style icon, hidden layers use a closed-eye style, and each card has its own trash button and opacity slider.
+
+Project save/open now preserves the full layer state: layer order, layer visibility, layer opacity, active layer, and each object's `layerId`, so reopening a saved project should restore the drawing stack exactly.
+
+## Latest save/open layer restore fix
+
+Opening a saved project now restores the saved layer list before loading the background image. This prevents the image-loading normalization step from seeing unknown saved `layerId`s and incorrectly moving all objects into one default layer. Saved projects should now reopen with every object on its original layer.

@@ -50,9 +50,14 @@ export async function restoreProject(data, silent = false) {
   state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
   state.undoStack = [];
   state.redoStack = [];
-  await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
+
+  // Restore the saved layer list BEFORE loading the image. Loading the image
+  // calls ensureLayerModel(), and if the saved layers are not present yet,
+  // that normalization step can incorrectly move every object into the current
+  // default layer. Restoring layers first preserves each object's saved layerId.
   restoreLayersFromData(data);
-  renderLayerPanel();
+  await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
+
   writeSurfaceControls();
   ensureLayerModel();
   renderLayerPanel();
