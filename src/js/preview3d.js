@@ -53,7 +53,15 @@ export function initPreview3d() {
 export function resetPreviewAngle() {
   const domain = createSurfaceDomain(state.surface);
   state.preview.zoom = 1.0;
-  if (domain.type === "torus" || domain.type === "klein" || domain.type === "double-reversed") {
+  if (domain.type === "klein") {
+    state.preview.yaw = -0.55;
+    state.preview.pitch = 0.28;
+    state.preview.zoom = 1.08;
+  } else if (domain.type === "double-reversed") {
+    state.preview.yaw = -0.68;
+    state.preview.pitch = 0.38;
+    state.preview.zoom = 1.05;
+  } else if (domain.type === "torus") {
     state.preview.yaw = -0.74;
     state.preview.pitch = 0.45;
   } else if (domain.topology.repeatV1) {
@@ -112,6 +120,7 @@ function fragmentShaderSource() {
     uniform sampler2D uTexture;
     uniform bool uUseTexture;
     uniform bool uUseLighting;
+    uniform bool uTwoSidedLighting;
     uniform vec4 uTexRect;
     uniform float uImageStrength;
     uniform float uOpacity;
@@ -131,7 +140,9 @@ function fragmentShaderSource() {
       if (uUseLighting) {
         vec3 n = normalize(vNormal);
         vec3 light = normalize(vec3(-0.35, 0.72, 0.82));
-        float l = 0.93 + 0.07 * max(dot(n, light), 0.0);
+        float lit = dot(n, light);
+        float sided = uTwoSidedLighting ? abs(lit) : max(lit, 0.0);
+        float l = 0.92 + 0.08 * sided;
         base.rgb *= l;
       }
       base.a *= clamp(uOpacity, 0.0, 1.0);
@@ -162,6 +173,7 @@ function createProgram(gl, vsSource, fsSource) {
     uTexture: gl.getUniformLocation(p, "uTexture"),
     uUseTexture: gl.getUniformLocation(p, "uUseTexture"),
     uUseLighting: gl.getUniformLocation(p, "uUseLighting"),
+    uTwoSidedLighting: gl.getUniformLocation(p, "uTwoSidedLighting"),
     uTexRect: gl.getUniformLocation(p, "uTexRect"),
     uImageStrength: gl.getUniformLocation(p, "uImageStrength"),
     uOpacity: gl.getUniformLocation(p, "uOpacity")
@@ -190,21 +202,21 @@ function resizePreviewCanvas() {
 function mapSteps(map) {
   if (map.type === "plane") return { u: 2, v: 2 };
   if (map.type === "cylinder" || map.type === "mobius") return { u: 112, v: 56 };
+  if (map.type === "klein") return map.reversedV1 ? { u: 220, v: 88 } : { u: 88, v: 220 };
+  if (map.type === "double-reversed") return { u: 180, v: 180 };
   return { u: 144, v: 80 };
 }
 
 function buildSurfaceMesh(map) {
   const out = [];
   const steps = mapSteps(map);
+  const uIntervals = axisIntervals(steps.u, map.pieceBreaks?.u);
+  const vIntervals = axisIntervals(steps.v, map.pieceBreaks?.v);
   let patches = 0;
-  const expected = steps.u * steps.v;
+  const expected = uIntervals.length * vIntervals.length;
 
-  for (let i = 0; i < steps.u; i++) {
-    const u0 = i / steps.u;
-    const u1 = (i + 1) / steps.u;
-    for (let j = 0; j < steps.v; j++) {
-      const v0 = j / steps.v;
-      const v1 = (j + 1) / steps.v;
+  for (const [u0, u1] of uIntervals) {
+    for (const [v0, v1] of vIntervals) {
       if (!map.isValidUV(u0, v0) || !map.isValidUV(u1, v0) || !map.isValidUV(u1, v1) || !map.isValidUV(u0, v1)) continue;
       pushQuad(out, map, u0, v0, u1, v1, surfaceColor(u0, v0));
       patches++;
@@ -213,6 +225,29 @@ function buildSurfaceMesh(map) {
 
   if (patches < expected * 0.995) console.warn("3D surface coverage incomplete", { type: map.type, patches, expected });
   return new Float32Array(out);
+}
+
+function axisIntervals(totalSteps, breaks = null) {
+  if (!breaks || breaks.length < 2) {
+    return Array.from({ length: totalSteps }, (_, i) => [i / totalSteps, (i + 1) / totalSteps]);
+  }
+
+  const cleanBreaks = [...new Set(breaks.map(value => clamp(value, 0, 1)))].sort((a, b) => a - b);
+  const intervals = [];
+  for (let i = 1; i < cleanBreaks.length; i++) {
+    const start = cleanBreaks[i - 1];
+    const end = cleanBreaks[i];
+    const span = end - start;
+    if (span <= 0) continue;
+    const localSteps = Math.max(1, Math.round(totalSteps * span));
+    for (let j = 0; j < localSteps; j++) {
+      intervals.push([
+        start + span * (j / localSteps),
+        start + span * ((j + 1) / localSteps)
+      ]);
+    }
+  }
+  return intervals;
 }
 
 function surfaceColor(u, v) {
@@ -238,7 +273,7 @@ function surfaceVertex(map, u, v, lift = 0) {
 function buildGridMesh(map, domain) {
   const out = [];
   const nonOrientable = map.type === "mobius" || map.type === "klein" || map.type === "double-reversed";
-  const divisions = map.type === "plane" ? 8 : nonOrientable ? 18 : 14;
+  const divisions = map.type === "plane" ? 8 : map.type === "double-reversed" ? 20 : nonOrientable ? 18 : 14;
   const width = map.type === "plane" ? 0.0048 : nonOrientable ? 0.0058 : 0.0055;
   const mainGrid = map.representation === "immersion" ? IMMERSION_GRID_COLOR : map.representation === "inspection" ? INSPECTION_GRID_COLOR : GRID_COLOR;
 
@@ -338,7 +373,7 @@ function addDotMesh(out, object, map, domain, color, liftOffset = 0) {
   // v=0/v=1 can otherwise be clipped by the fundamental-domain split. We draw
   // small neighboring lifted copies too, then let the domain splitter/normalizer
   // decide which pieces belong on the visible surface. This is especially
-  // important for torus/cylinder/Möbius/Klein seams.
+  // important for torus/cylinder/Möbius/Klein/projective-plane seams.
   const uCopies = domain.topology?.repeatV1 ? [-1, 0, 1] : [0];
   const vCopies = domain.topology?.repeatV2 ? [-1, 0, 1] : [0];
 
@@ -407,11 +442,18 @@ function pushRibbon(out, uvPath, map, halfWidth, lift, color) {
   if (uvPath.length < 2) return;
   const left = [];
   const right = [];
+  let previousNormal = null;
   for (let i = 0; i < uvPath.length; i++) {
     const prev = uvPath[Math.max(0, i - 1)];
     const next = uvPath[Math.min(uvPath.length - 1, i + 1)];
     const uv = uvPath[i];
-    const normal = map.normal(uv.u, uv.v);
+    let normal = map.normal(uv.u, uv.v);
+    // Klein, Möbius, and projective-plane surfaces have no global outside. Keep each individual
+    // stroke/grid ribbon locally continuous so it does not suddenly jump below
+    // the surface after crossing an orientation-reversing seam.
+    if (previousNormal && dot3(normal, previousNormal) < 0) normal = scale3(normal, -1);
+    previousNormal = normal;
+
     const p = add3(map.point(uv.u, uv.v), scale3(normal, lift));
     const pPrev = map.point(prev.u, prev.v);
     const pNext = map.point(next.u, next.v);
@@ -454,6 +496,7 @@ function drawMesh(data, options) {
   gl.enableVertexAttribArray(program.aColor);
   gl.uniform1i(program.uUseTexture, options.useTexture ? 1 : 0);
   gl.uniform1i(program.uUseLighting, options.lighting ? 1 : 0);
+  gl.uniform1i(program.uTwoSidedLighting, options.twoSidedLighting ? 1 : 0);
   gl.uniform4fv(program.uTexRect, options.texRect || [0, 0, 1, 1]);
   gl.uniform1f(program.uImageStrength, options.imageStrength ?? 0);
   gl.uniform1f(program.uOpacity, options.opacity ?? 1.0);
@@ -698,7 +741,8 @@ export function drawPreview3d() {
     texRect: [0, 0, 1, 1],
     imageStrength: tex ? 1.0 : 0,
     opacity: state.preview.opacity ?? DEFAULT_SURFACE_OPACITY,
-    lighting: !DEBUG_UV_COVERAGE
+    lighting: !DEBUG_UV_COVERAGE,
+    twoSidedLighting: isNonOrientable(map)
   });
   gl.disable(gl.POLYGON_OFFSET_FILL);
 
@@ -718,18 +762,28 @@ export function drawPreview3d() {
   updateSummary(map);
 }
 
+function isNonOrientable(map) {
+  return map.type === "mobius" || map.type === "klein" || map.type === "double-reversed";
+}
+
 function updateSummary(map) {
   if (!state.ui.preview3dSummary) return;
-  const label = map.typeLabel || (map.type.charAt(0).toUpperCase() + map.type.slice(1));
+  const label = map.type === "klein"
+    ? "Traditional Klein bottle"
+    : map.type === "double-reversed"
+      ? "Projective plane"
+      : map.typeLabel || (map.type.charAt(0).toUpperCase() + map.type.slice(1));
   const l1 = Math.round(length(state.surface.v1));
   const l2 = Math.round(length(state.surface.v2));
-  const representation = map.type === "double-reversed"
-    ? "closed coordinate preview"
-    : map.representation === "immersion"
-      ? "immersed coordinate map"
-      : map.representation === "inspection"
-        ? "inspection coordinate map"
-        : "full cell coordinate map";
+  const representation = map.type === "klein"
+    ? "clean self-intersecting immersion"
+    : map.type === "double-reversed"
+      ? "double-reversed self-intersecting immersion"
+      : map.representation === "immersion"
+        ? "immersed coordinate map"
+        : map.representation === "inspection"
+          ? "inspection coordinate map"
+          : "full cell coordinate map";
   state.ui.preview3dSummary.textContent = `${label} · ${representation} · |v1| ${l1} · |v2| ${l2}`;
 }
 
@@ -764,6 +818,7 @@ function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 function scale3(a, s) { return [a[0] * s, a[1] * s, a[2] * s]; }
 function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function len3(a) { return Math.hypot(a[0], a[1], a[2]); }
+function dot3(a, b) { return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]; }
 function normalize(a) { const l = Math.max(0.000001, len3(a)); return [a[0] / l, a[1] / l, a[2] / l]; }
 function finite3(p) { return p && Number.isFinite(p[0]) && Number.isFinite(p[1]) && Number.isFinite(p[2]); }
 

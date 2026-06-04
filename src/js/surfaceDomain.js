@@ -68,8 +68,8 @@ function classifyTopology(topo) {
     return { type, label: type === "mobius" ? "Möbius" : "Cylinder", representation: "embedding", linkedPairCount, reverseCount, reversedPair, preservedPair };
   }
   if (reverseCount === 0) return { type: "torus", label: "Torus", representation: "embedding", linkedPairCount, reverseCount, reversedPair, preservedPair };
-  if (reverseCount === 1) return { type: "klein", label: "Klein immersion", representation: "immersion", linkedPairCount, reverseCount, reversedPair, preservedPair };
-  return { type: "double-reversed", label: "Double-reversed", representation: "immersion", linkedPairCount, reverseCount, reversedPair, preservedPair };
+  if (reverseCount === 1) return { type: "klein", label: "Klein bottle", representation: "immersion", linkedPairCount, reverseCount, reversedPair, preservedPair };
+  return { type: "double-reversed", label: "Projective plane", representation: "immersion", linkedPairCount, reverseCount, reversedPair, preservedPair };
 }
 
 function transitionAcrossEdge(uv, edge, topo) {

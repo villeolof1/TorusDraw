@@ -183,7 +183,7 @@ The 3D preview now distinguishes ordinary Klein-style single-reversal gluings fr
 
 ## Latest 3D grid/non-orientable update
 
-The 3D preview grid now draws internal coordinate lines separately from linked seams and open boundaries, so linked surfaces no longer show duplicate boundary grids. Grid overlays now write depth before strokes, reducing the appearance of ghost grids on immersed/self-overlapping previews. Double-reversed A/B edge schemes are rendered as a closed Klein-like coordinate preview rather than as an open inspection sheet.
+The 3D preview grid now draws internal coordinate lines separately from linked seams and open boundaries, so linked surfaces no longer show duplicate boundary grids. Grid overlays now write depth before strokes, reducing the appearance of ghost grids on immersed/self-overlapping previews. Double-reversed A/B edge schemes are now rendered as a seam-correct projective-plane immersion rather than as a fake Klein-like coordinate preview.
 
 
 ## Latest 3D metric geometry update
@@ -308,3 +308,7 @@ Project save/open now preserves the full layer state: layer order, layer visibil
 ## Latest save/open layer restore fix
 
 Opening a saved project now restores the saved layer list before loading the background image. This prevents the image-loading normalization step from seeing unknown saved `layerId`s and incorrectly moving all objects into one default layer. Saved projects should now reopen with every object on its original layer.
+
+### 3D dimension-aware Klein and projective-plane update
+
+The traditional Klein bottle preview now uses the user-entered cell metric: the reversed edge direction controls the long bottle path, the preserved perpendicular height controls tube/bulb thickness, determinant sign mirrors the model, and parallelogram skew applies only as a seam-safe interior twist. Double-reversed edge schemes are treated as projective planes with antipodal boundary gluing, using a square-to-disk map plus a projective-plane immersion whose seam identities are validated numerically.

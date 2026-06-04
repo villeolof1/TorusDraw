@@ -175,67 +175,263 @@ function createMobiusMap(domain, metric) {
 
 function createKleinMap(domain, metric) {
   const reversedV1 = domain.reversedPair === "v1";
-  const mainLength = reversedV1 ? metric.lenV : metric.lenU;
-  const tubeLength = reversedV1 ? metric.heightUOverV : metric.heightVOverU;
-  const shear = reversedV1 ? metric.skewUAlongV : metric.skewVAlongU;
-  const fit = 1.70 / Math.max(mainLength / TAU + tubeLength / TAU, 1);
-  const s = clamp(fit, 0.00085, 0.010);
-  const R = Math.max(0.56, (mainLength * s) / TAU);
-  const r = clamp((tubeLength * s) / TAU, 0.10, Math.max(0.12, R * 0.38));
+  const km = createKleinMetric(metric, reversedV1);
+
+  const map = {
+    representation: "immersion",
+    metricKind: "traditional-klein-bottle-metric-immersion",
+    reversedV1,
+    // The classical bottle formula is piecewise along the long path. Making
+    // these exact mesh boundaries prevents triangles from cutting across the
+    // neck/penetration transitions.
+    pieceBreaks: reversedV1
+      ? { u: [0, 0.25, 0.5, 0.75, 1], v: [0, 1] }
+      : { u: [0, 1], v: [0, 0.25, 0.5, 0.75, 1] },
+    point(u, v) {
+      // The reversed edge pair is the bottle path. The preserved edge pair is
+      // the circular tube coordinate. This is the essential Klein quotient:
+      //   P(ring, 0) = P(1 - ring, 1)
+      const main = reversedV1 ? u : v;
+      const ring = reversedV1 ? v : u;
+      const seamSafe = Math.sin(Math.PI * clamp(main, 0, 1));
+      const adjustedRing = ring + km.skewTwist * seamSafe * seamSafe;
+      return applyKleinMetric(classicKleinBottleRawPoint(adjustedRing, main), km);
+    },
+    worldToModelScale: km.worldToModelScale
+  };
+
+  validateKleinSeams(map);
+  return map;
+}
+
+function createKleinMetric(metric, reversedV1) {
+  const mainLength = reversedV1 ? metric.lenU : metric.lenV;
+  const tubeLength = reversedV1 ? metric.heightVOverU : metric.heightUOverV;
+  const skew = reversedV1 ? metric.skewVAlongU : metric.skewUAlongV;
+
+  // One global fit keeps the model comfortably visible while preserving the
+  // user-entered aspect ratio: the reversed direction controls bottle height,
+  // and the preserved perpendicular height controls tube/bulb thickness.
+  const fit = 2.55 / Math.max(mainLength, tubeLength * 2.25, 1);
+  const mainScale = mainLength * fit * 0.56;
+  const tubeScale = tubeLength * fit * 0.78;
+  const depthScale = tubeLength * fit * 0.58;
 
   return {
-    representation: "immersion",
-    metricKind: "clean-klein-bottle-immersion",
-    point(u, v) {
-      const main = reversedV1 ? v : u;
-      const tubeCoord = reversedV1 ? u : v;
-      return cleanBottlePoint(main, tubeCoord, R, r, shear);
-    },
-    worldToModelScale: s
+    mainScale,
+    tubeScale,
+    depthScale,
+    mirror: metric.detSign < 0 ? -1 : 1,
+    // The twist envelope in createKleinMap is zero on the reversed seam, so
+    // skew can influence the interior presentation without breaking gluing.
+    skewTwist: clamp(skew * 0.14, -0.30, 0.30),
+    worldToModelScale: Math.max(0.0006, Math.min(mainScale, tubeScale) / Math.max(1, Math.min(mainLength, tubeLength)))
   };
 }
 
 function createDoubleReversedMap(domain, metric) {
-  const lenMain = metric.lenU;
-  const lenTube = metric.heightVOverU;
-  const fit = 1.70 / Math.max(lenMain / TAU + lenTube / TAU, 1);
-  const s = clamp(fit, 0.00085, 0.010);
-  const R = Math.max(0.56, (lenMain * s) / TAU);
-  const r = clamp((lenTube * s) / TAU, 0.10, Math.max(0.12, R * 0.38));
-  const skew = metric.skewVAlongU;
+  const pm = createProjectivePlaneMetric(metric);
+
+  const map = {
+    representation: "immersion",
+    metricKind: "projective-plane-double-reversed-immersion",
+    // The projective-plane map is smoothest when the mesh honors the square
+    // and disk symmetry axes. This also makes seam and grid lines cleaner.
+    pieceBreaks: {
+      u: [0, 0.25, 0.5, 0.75, 1],
+      v: [0, 0.25, 0.5, 0.75, 1]
+    },
+    point(u, v) {
+      const disk = doubleReversedSquareToDisk(u, v);
+      const raw = projectivePlaneRawPoint(disk.x, disk.y, pm);
+      return applyProjectivePlaneMetric(raw, pm);
+    },
+    worldToModelScale: pm.worldToModelScale
+  };
+
+  validateProjectivePlaneSeams(map);
+  return map;
+}
+
+function createProjectivePlaneMetric(metric) {
+  const aspect = clamp(metric.lenU / Math.max(1, metric.lenV), 0.24, 4.2);
+  const avgLength = Math.sqrt(metric.lenU * metric.lenV);
+  const fit = 2.15 / Math.max(metric.lenU, metric.lenV, avgLength * 1.2, 1);
+  const baseScale = Math.max(0.28, avgLength * fit);
+  const skew = 0.5 * (metric.skewVAlongU - metric.skewUAlongV);
 
   return {
-    representation: "immersion",
-    metricKind: "clean-double-reversed-bottle-immersion",
-    point(u, v) {
-      return cleanBottlePoint(u, v, R, r, skew, 0.16);
-    },
-    worldToModelScale: s
+    uStretch: Math.sqrt(aspect),
+    vStretch: 1 / Math.sqrt(aspect),
+    baseScale,
+    mirror: metric.detSign < 0 ? -1 : 1,
+    centerX: (aspect - (1 / aspect)) / 2,
+    skewTwist: clamp(skew * 0.42, -0.55, 0.55),
+    worldToModelScale: fit
   };
 }
 
-function cleanBottlePoint(main, tubeCoord, R, r, shear, extraTwist = 0) {
-  const theta = TAU * (main + shear * tubeCoord);
-  const phi = TAU * (tubeCoord + extraTwist * Math.sin(TAU * main));
-  const neck = smoothstep(0.55, 0.86, main) * (1 - smoothstep(0.94, 1.0, main));
-  const bulb = 1 - smoothstep(0.40, 0.72, main);
-  const radius = R * (0.92 + 0.26 * bulb - 0.24 * neck);
-  const tubeRadius = r * (1.24 - 0.56 * neck + 0.18 * bulb);
-  const radial = [Math.cos(theta), 0, Math.sin(theta)];
-  const vertical = [0, 1, 0];
+function classicKleinBottleRawPoint(ring, main) {
+  // Traditional self-intersecting Klein bottle, based on the classical
+  // four-piece tube construction. The ring phase shift makes the app's
+  // orientation-reversing seam exact: point(q, 0) === point(1 - q, 1).
+  const u = TAU * (ring - 0.25);
+  const v = 4 * Math.PI * clamp(main, 0, 1);
+  let x, y, z;
 
-  const center = [
-    radius * radial[0] + neck * R * 0.22 * Math.cos(theta * 0.5),
-    0.54 * neck - 0.20 * bulb * Math.cos(theta),
-    radius * radial[2] - neck * R * 0.28 * Math.sin(theta * 0.5)
-  ];
+  if (v < Math.PI) {
+    x = (2.5 - 1.5 * Math.cos(v)) * Math.cos(u);
+    y = (2.5 - 1.5 * Math.cos(v)) * Math.sin(u);
+    z = -2.5 * Math.sin(v);
+  } else if (v < 2 * Math.PI) {
+    x = (2.5 - 1.5 * Math.cos(v)) * Math.cos(u);
+    y = (2.5 - 1.5 * Math.cos(v)) * Math.sin(u);
+    z = 3 * v - 3 * Math.PI;
+  } else if (v < 3 * Math.PI) {
+    x = -2 + (2 + Math.cos(u)) * Math.cos(v);
+    y = Math.sin(u);
+    z = (2 + Math.cos(u)) * Math.sin(v) + 3 * Math.PI;
+  } else {
+    x = -2 + 2 * Math.cos(v) - Math.cos(u);
+    y = Math.sin(u);
+    z = -3 * v + 12 * Math.PI;
+  }
 
-  const squeeze = 1 - 0.36 * neck * Math.max(0, Math.cos(phi));
+  return { x, y, z };
+}
+
+function applyKleinMetric(raw, km) {
+  const b = CLASSIC_KLEIN_RAW_BOUNDS;
+  const x = (raw.x - b.center.x) / b.half.x;
+  const y = (raw.y - b.center.y) / b.half.y;
+  const z = (raw.z - b.center.z) / b.half.z;
+
+  // Raw z is the long bottle path. Raw x/y are the tube/bulb cross-section.
   return [
-    center[0] + tubeRadius * squeeze * Math.cos(phi) * radial[0],
-    center[1] + tubeRadius * Math.sin(phi),
-    center[2] + tubeRadius * squeeze * Math.cos(phi) * radial[2]
+    x * km.tubeScale * km.mirror,
+    z * km.mainScale,
+    y * km.depthScale
   ];
+}
+
+function computeClassicKleinRawBounds() {
+  const min = { x: Infinity, y: Infinity, z: Infinity };
+  const max = { x: -Infinity, y: -Infinity, z: -Infinity };
+  for (let i = 0; i <= 160; i++) {
+    const main = i / 160;
+    for (let j = 0; j <= 72; j++) {
+      const ring = j / 72;
+      const p = classicKleinBottleRawPoint(ring, main);
+      min.x = Math.min(min.x, p.x); min.y = Math.min(min.y, p.y); min.z = Math.min(min.z, p.z);
+      max.x = Math.max(max.x, p.x); max.y = Math.max(max.y, p.y); max.z = Math.max(max.z, p.z);
+    }
+  }
+  const center = {
+    x: (min.x + max.x) / 2,
+    y: (min.y + max.y) / 2,
+    z: (min.z + max.z) / 2
+  };
+  return {
+    min,
+    max,
+    center,
+    half: {
+      x: Math.max(0.000001, (max.x - min.x) / 2),
+      y: Math.max(0.000001, (max.y - min.y) / 2),
+      z: Math.max(0.000001, (max.z - min.z) / 2)
+    }
+  };
+}
+
+const CLASSIC_KLEIN_RAW_BOUNDS = computeClassicKleinRawBounds();
+
+function doubleReversedSquareToDisk(u, v) {
+  // Shirley/Chiu concentric square-to-disk map. It preserves antipodal
+  // symmetry exactly: disk(-x, -y) = -disk(x, y). Therefore the two reversed
+  // edge pairs become the single antipodal boundary of a projective plane.
+  const x = 2 * clamp(u, 0, 1) - 1;
+  const y = 2 * clamp(v, 0, 1) - 1;
+  if (Math.abs(x) < 1e-12 && Math.abs(y) < 1e-12) return { x: 0, y: 0, r: 0 };
+
+  let r, phi;
+  if (Math.abs(x) > Math.abs(y)) {
+    r = x;
+    phi = (Math.PI / 4) * (y / x);
+  } else {
+    r = y;
+    phi = Math.PI / 2 - (Math.PI / 4) * (x / y);
+  }
+  const dx = r * Math.cos(phi);
+  const dy = r * Math.sin(phi);
+  return { x: dx, y: dy, r: Math.hypot(dx, dy) };
+}
+
+function projectivePlaneRawPoint(dx, dy, pm) {
+  const r = clamp(Math.hypot(dx, dy), 0, 1);
+  if (r > 1e-8 && Math.abs(pm.skewTwist) > 1e-8) {
+    // Interior-only twist: exactly zero on the boundary, so both reversed
+    // seams remain mathematically exact.
+    const angle = Math.atan2(dy, dx) + pm.skewTwist * r * (1 - r) * (1 - r);
+    dx = r * Math.cos(angle);
+    dy = r * Math.sin(angle);
+  }
+
+  const x = dx * pm.uStretch;
+  const y = dy * pm.vStretch;
+  const boundaryFade = Math.max(0, 1 - r * r);
+
+  // Cross-cap/projective-plane immersion from a disk with antipodal boundary.
+  // On r=1, the third coordinate is zero and the first two are quadratic, so
+  // antipodal boundary points map to the same 3D location exactly.
+  return {
+    x: x * x - y * y,
+    y: 2 * x * y,
+    z: 1.65 * x * boundaryFade
+  };
+}
+
+function applyProjectivePlaneMetric(raw, pm) {
+  return [
+    (raw.x - pm.centerX) * pm.baseScale * pm.mirror,
+    raw.z * pm.baseScale * 1.06,
+    raw.y * pm.baseScale * 0.88
+  ];
+}
+
+let kleinValidationWarned = false;
+function validateKleinSeams(map) {
+  if (kleinValidationWarned || !map.metricKind?.startsWith("traditional-klein-bottle")) return;
+  const eps = 0.0009;
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    const circularA = map.reversedV1 ? map.point(t, 0) : map.point(0, t);
+    const circularB = map.reversedV1 ? map.point(t, 1) : map.point(1, t);
+    const twistedA = map.reversedV1 ? map.point(0, t) : map.point(t, 0);
+    const twistedB = map.reversedV1 ? map.point(1, 1 - t) : map.point(1 - t, 1);
+    if (distance3(circularA, circularB) > eps || distance3(twistedA, twistedB) > eps) {
+      kleinValidationWarned = true;
+      console.warn("Klein seam validation failed", { t, circularA, circularB, twistedA, twistedB });
+      return;
+    }
+  }
+}
+
+let projectivePlaneValidationWarned = false;
+function validateProjectivePlaneSeams(map) {
+  if (projectivePlaneValidationWarned || map.metricKind !== "projective-plane-double-reversed-immersion") return;
+  const eps = 0.0009;
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    const lrA = map.point(0, t);
+    const lrB = map.point(1, 1 - t);
+    const tbA = map.point(t, 0);
+    const tbB = map.point(1 - t, 1);
+    if (distance3(lrA, lrB) > eps || distance3(tbA, tbB) > eps) {
+      projectivePlaneValidationWarned = true;
+      console.warn("Projective-plane seam validation failed", { t, lrA, lrB, tbA, tbB });
+      return;
+    }
+  }
 }
 
 function smoothstep(edge0, edge1, x) {
@@ -248,34 +444,37 @@ function withNormal(map) {
     ...map,
     normal(u, v) {
       const e = 0.001;
-      // Closed directions should sample through the map instead of collapsing
-      // the derivative to zero at the edge.
-      const uw0 = wrapIfClosed(u - e, map.domain.topology.repeatV1);
-      const uw1 = wrapIfClosed(u + e, map.domain.topology.repeatV1);
-      const vw0 = wrapIfClosed(v - e, map.domain.topology.repeatV2);
-      const vw1 = wrapIfClosed(v + e, map.domain.topology.repeatV2);
-      const u0 = map.domain.topology.repeatV1 ? uw0 : clamp(u - e, 0, 1);
-      const u1 = map.domain.topology.repeatV1 ? uw1 : clamp(u + e, 0, 1);
-      const v0 = map.domain.topology.repeatV2 ? vw0 : clamp(v - e, 0, 1);
-      const v1 = map.domain.topology.repeatV2 ? vw1 : clamp(v + e, 0, 1);
+      // Sample neighboring coordinates through the actual domain normalizer.
+      // This is critical for orientation-reversing seams: crossing the seam
+      // must also flip the transverse coordinate, not merely wrap 0 ↔ 1.
+      const u0uv = normalizeOffsetUV(map, u - e, v);
+      const u1uv = normalizeOffsetUV(map, u + e, v);
+      const v0uv = normalizeOffsetUV(map, u, v - e);
+      const v1uv = normalizeOffsetUV(map, u, v + e);
 
-      const pu0 = map.point(u0, v);
-      const pu1 = map.point(u1, v);
-      const pv0 = map.point(u, v0);
-      const pv1 = map.point(u, v1);
+      const pu0 = map.point(u0uv.u, u0uv.v);
+      const pu1 = map.point(u1uv.u, u1uv.v);
+      const pv0 = map.point(v0uv.u, v0uv.v);
+      const pv1 = map.point(v1uv.u, v1uv.v);
       const du = sub3(pu1, pu0);
       const dv = sub3(pv1, pv0);
       let n = normalize(cross(dv, du));
       if (len3(n) < 0.001 || !Number.isFinite(n[0])) {
         const p = map.point(u, v);
-        const pu = map.point(clamp(u + e, 0, 1), v);
-        const pv = map.point(u, clamp(v + e, 0, 1));
+        const pu = map.point(normalizeOffsetUV(map, u + e, v).u, normalizeOffsetUV(map, u + e, v).v);
+        const pv = map.point(normalizeOffsetUV(map, u, v + e).u, normalizeOffsetUV(map, u, v + e).v);
         n = normalize(cross(sub3(pv, p), sub3(pu, p)));
       }
       if (len3(n) < 0.001 || !Number.isFinite(n[0])) n = [0, 1, 0];
       return n;
     }
   };
+}
+
+function normalizeOffsetUV(map, u, v) {
+  const uv = map.domain.normalizeUV ? map.domain.normalizeUV({ u, v }) : null;
+  if (uv) return uv;
+  return { u: clamp(u, 0, 1), v: clamp(v, 0, 1) };
 }
 
 function wrapIfClosed(value, closed) {
@@ -289,4 +488,5 @@ function average3(points) {
 function sub3(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
 function cross(a, b) { return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]; }
 function len3(a) { return Math.hypot(a[0], a[1], a[2]); }
+function distance3(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2]); }
 function normalize(a) { const l = Math.max(0.000001, len3(a)); return [a[0] / l, a[1] / l, a[2] / l]; }
