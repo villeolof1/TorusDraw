@@ -5,12 +5,13 @@ import { centerView, writeSurfaceControls, syncImageUi, syncZoomSlider } from ".
 import { requestRender } from "./render2d.js";
 import { drawPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { closePanels, showStatus } from "./dom.js";
+import { ensureLayerModel, serializableLayers, restoreLayersFromData, renderLayerPanel, imageLayer, syncImageLayerFromLegacyState } from "./layers.js";
 
-const STORAGE_KEY = "torus-drawing-app.autosave.v9";
+const STORAGE_KEY = "torus-drawing-app.autosave.v10";
 
 export function serializeProject() {
   return {
-    version: 9,
+    version: 10,
     surface: cloneSurface(state.surface),
     hideGrid: state.hideGrid,
     view: { ...state.view },
@@ -18,10 +19,15 @@ export function serializeProject() {
     nextObjectId: state.nextObjectId,
     color: state.ui.colorInput.value,
     penSize: state.penSize,
+    dotSize: state.dotSize,
     eraserSize: state.eraserSize,
     backgroundDataUrl: state.background.dataUrl,
     imageFitMode: state.imageFitMode,
-    imageOpacity: state.imageOpacity
+    imageOpacity: state.imageOpacity,
+    layers: serializableLayers(),
+    activeLayerId: state.activeLayerId,
+    nextLayerId: state.nextLayerId,
+    previewTransparent: state.preview.transparent !== false
   };
 }
 
@@ -33,16 +39,23 @@ export async function restoreProject(data, silent = false) {
   state.objects = cloneObjects(data.objects);
   state.nextObjectId = data.nextObjectId || state.objects.reduce((m, o) => Math.max(m, o.id || 0), 0) + 1;
   state.penSize = Number(data.penSize || data.size || 4);
+  state.dotSize = Number(data.dotSize || 20);
   state.eraserSize = Number(data.eraserSize || 20);
   if ((Number(data.version) || 0) < 6 && Math.round(state.eraserSize) === 10) state.eraserSize = 20;
   state.ui.colorInput.value = data.color || "#111111";
   state.imageFitMode = data.imageFitMode === "stretch" ? "stretch" : "crop";
   state.imageOpacity = Number.isFinite(data.imageOpacity) ? data.imageOpacity : 0.9;
   state.preview.enhanced = true;
+  state.preview.transparent = data.previewTransparent !== false;
+  state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
   state.undoStack = [];
   state.redoStack = [];
   await setBackgroundFromDataUrl(data.backgroundDataUrl || null);
+  restoreLayersFromData(data);
+  renderLayerPanel();
   writeSurfaceControls();
+  ensureLayerModel();
+  renderLayerPanel();
   syncImageUi();
   syncZoomSlider();
   state.ui.undoButton.disabled = true;
@@ -84,13 +97,22 @@ export function resetEverything() {
   state.hideGrid = false;
   state.view = { x: 300, y: -210, zoom: 0.9 };
   state.penSize = 4;
+  state.dotSize = 20;
   state.eraserSize = 20;
   state.tool = "pen";
   state.eraserMode = "object";
   state.imageFitMode = "crop";
   state.imageOpacity = 0.9;
   state.preview.enhanced = true;
+  state.preview.transparent = true;
+  state.preview.opacity = 0.8;
   state.background = { image: null, dataUrl: null, naturalWidth: 1, naturalHeight: 1 };
+  state.layers = [
+    { id: "image-background", type: "image", name: "Image", opacity: 0.9, visible: true },
+    { id: "layer-1", type: "drawing", name: "Layer 1", opacity: 1, visible: true }
+  ];
+  state.activeLayerId = "layer-1";
+  state.nextLayerId = 2;
 
   // Reset visible form controls.
   state.ui.colorInput.value = "#111111";
@@ -98,12 +120,15 @@ export function resetEverything() {
   state.ui.backgroundInput.value = "";
   state.ui.projectInput.value = "";
   writeSurfaceControls();
+  ensureLayerModel();
+  renderLayerPanel();
   syncImageUi();
   syncZoomSlider();
   state.ui.undoButton.disabled = true;
   state.ui.redoButton.disabled = true;
   state.ui.penButton.classList.add("active");
   state.ui.lineButton.classList.remove("active");
+  state.ui.dotButton.classList.remove("active");
   state.ui.eraseButton.classList.remove("active");
   state.ui.homButton.classList.remove("active");
   state.ui.panButton.classList.remove("active");
@@ -152,12 +177,18 @@ export function setBackgroundFromDataUrl(dataUrl) {
   return new Promise(resolve => {
     if (!dataUrl) {
       state.background = { image: null, dataUrl: null, naturalWidth: 1, naturalHeight: 1 };
+      ensureLayerModel();
+      renderLayerPanel();
       resolve();
       return;
     }
     const image = new Image();
     image.onload = () => {
       state.background = { image, dataUrl, naturalWidth: image.naturalWidth || 1, naturalHeight: image.naturalHeight || 1 };
+      ensureLayerModel();
+      const layer = imageLayer();
+      if (layer) { layer.visible = true; layer.opacity = state.imageOpacity; }
+      renderLayerPanel();
       resolve();
     };
     image.onerror = resolve;

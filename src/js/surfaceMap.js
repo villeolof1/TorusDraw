@@ -153,7 +153,7 @@ function createMobiusMap(domain, metric) {
   const fit = 2.9 / Math.max(repeatLength / Math.PI + openHeight, 1);
   const s = clamp(fit, 0.0010, 0.012);
   const radius = Math.max(0.45, (repeatLength * s) / TAU);
-  const stripWidth = clamp(openHeight * s, 0.18, radius * 1.16);
+  const stripWidth = clamp(openHeight * s, 0.16, radius * 0.82);
 
   return {
     loopU,
@@ -175,61 +175,72 @@ function createMobiusMap(domain, metric) {
 
 function createKleinMap(domain, metric) {
   const reversedV1 = domain.reversedPair === "v1";
-
-  // Choose coordinate roles from the actual gluing. The preserved linked pair
-  // forms the main loop; the reversed pair forms the non-orientable tube.
   const mainLength = reversedV1 ? metric.lenV : metric.lenU;
   const tubeLength = reversedV1 ? metric.heightUOverV : metric.heightVOverU;
   const shear = reversedV1 ? metric.skewUAlongV : metric.skewVAlongU;
-  const fit = 1.55 / Math.max(mainLength / TAU + tubeLength / TAU, 1);
+  const fit = 1.70 / Math.max(mainLength / TAU + tubeLength / TAU, 1);
   const s = clamp(fit, 0.00085, 0.010);
-  const R = Math.max(0.50, (mainLength * s) / TAU);
-  const r = clamp((tubeLength * s) / TAU, 0.12, Math.max(0.14, R * 0.50));
+  const R = Math.max(0.56, (mainLength * s) / TAU);
+  const r = clamp((tubeLength * s) / TAU, 0.10, Math.max(0.12, R * 0.38));
 
   return {
     representation: "immersion",
-    metricKind: "metric-klein-immersion",
+    metricKind: "clean-klein-bottle-immersion",
     point(u, v) {
       const main = reversedV1 ? v : u;
       const tubeCoord = reversedV1 ? u : v;
-      const theta = TAU * (main + shear * tubeCoord);
-      const phi = TAU * tubeCoord;
-      const tube = Math.cos(theta / 2) * Math.sin(phi) - Math.sin(theta / 2) * Math.sin(2 * phi);
-      const x = (R + r * tube) * Math.cos(theta);
-      const z = (R + r * tube) * Math.sin(theta);
-      const y = r * (Math.sin(theta / 2) * Math.sin(phi) + Math.cos(theta / 2) * Math.sin(2 * phi));
-      return [x, y, z];
+      return cleanBottlePoint(main, tubeCoord, R, r, shear);
     },
     worldToModelScale: s
   };
 }
 
 function createDoubleReversedMap(domain, metric) {
-  // Both linked directions reverse. We use the same coordinate-complete,
-  // metric-driven Klein-like immersion, but both cell directions affect the
-  // closed geometry instead of falling back to a generic shape.
   const lenMain = metric.lenU;
   const lenTube = metric.heightVOverU;
-  const fit = 1.55 / Math.max(lenMain / TAU + lenTube / TAU, 1);
+  const fit = 1.70 / Math.max(lenMain / TAU + lenTube / TAU, 1);
   const s = clamp(fit, 0.00085, 0.010);
-  const R = Math.max(0.50, (lenMain * s) / TAU);
-  const r = clamp((lenTube * s) / TAU, 0.12, Math.max(0.14, R * 0.50));
+  const R = Math.max(0.56, (lenMain * s) / TAU);
+  const r = clamp((lenTube * s) / TAU, 0.10, Math.max(0.12, R * 0.38));
   const skew = metric.skewVAlongU;
 
   return {
     representation: "immersion",
-    metricKind: "double-reversed-metric-immersion",
+    metricKind: "clean-double-reversed-bottle-immersion",
     point(u, v) {
-      const theta = TAU * (u + skew * v);
-      const phi = TAU * v;
-      const tube = Math.cos(theta / 2) * Math.sin(phi) - Math.sin(theta / 2) * Math.sin(2 * phi);
-      const x = (R + r * tube) * Math.cos(theta);
-      const z = (R + r * tube) * Math.sin(theta);
-      const y = r * (Math.sin(theta / 2) * Math.sin(phi) + Math.cos(theta / 2) * Math.sin(2 * phi));
-      return [x, y, z];
+      return cleanBottlePoint(u, v, R, r, skew, 0.16);
     },
     worldToModelScale: s
   };
+}
+
+function cleanBottlePoint(main, tubeCoord, R, r, shear, extraTwist = 0) {
+  const theta = TAU * (main + shear * tubeCoord);
+  const phi = TAU * (tubeCoord + extraTwist * Math.sin(TAU * main));
+  const neck = smoothstep(0.55, 0.86, main) * (1 - smoothstep(0.94, 1.0, main));
+  const bulb = 1 - smoothstep(0.40, 0.72, main);
+  const radius = R * (0.92 + 0.26 * bulb - 0.24 * neck);
+  const tubeRadius = r * (1.24 - 0.56 * neck + 0.18 * bulb);
+  const radial = [Math.cos(theta), 0, Math.sin(theta)];
+  const vertical = [0, 1, 0];
+
+  const center = [
+    radius * radial[0] + neck * R * 0.22 * Math.cos(theta * 0.5),
+    0.54 * neck - 0.20 * bulb * Math.cos(theta),
+    radius * radial[2] - neck * R * 0.28 * Math.sin(theta * 0.5)
+  ];
+
+  const squeeze = 1 - 0.36 * neck * Math.max(0, Math.cos(phi));
+  return [
+    center[0] + tubeRadius * squeeze * Math.cos(phi) * radial[0],
+    center[1] + tubeRadius * Math.sin(phi),
+    center[2] + tubeRadius * squeeze * Math.cos(phi) * radial[2]
+  ];
+}
+
+function smoothstep(edge0, edge1, x) {
+  const t = clamp((x - edge0) / Math.max(0.000001, edge1 - edge0), 0, 1);
+  return t * t * (3 - 2 * t);
 }
 
 function withNormal(map) {

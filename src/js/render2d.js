@@ -60,15 +60,15 @@ function imageCrop() {
   return { sx: 0, sy: (ih - sh) / 2, sw: iw, sh };
 }
 
-function drawCellImage(offset) {
+function drawCellImage(offset, layer = null) {
   const { background, ctx, surface } = state;
-  if (!background.image) return;
+  if (!background.image || layer?.visible === false) return;
   const c = cellTransform(surface, offset.i, offset.j);
   const crop = imageCrop();
   ctx.save();
   cellPath(offset);
   ctx.clip();
-  ctx.globalAlpha = state.imageOpacity;
+  ctx.globalAlpha = layer ? (layer.opacity ?? 1) : state.imageOpacity;
   ctx.translate(c.origin.x, c.origin.y);
   ctx.transform(c.e1.x, c.e1.y, c.e2.x, c.e2.y, 0, 0);
   // Cell coordinates use +v upward, but image pixels use y downward.
@@ -133,16 +133,30 @@ function transformedObjectPoint(objectPoint, offset) {
 }
 
 export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
-  if (!object || object.points.length < 2) return;
+  if (!object || !object.points?.length) return;
   const { ctx } = state;
   const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
-  if (points.length < 2) return;
+  if (!points.length) return;
   ctx.save();
   ctx.strokeStyle = object.color;
-  ctx.lineWidth = object.size;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   if (preview) ctx.globalAlpha = 0.72;
+
+  if (object.type === "dot") {
+    ctx.lineWidth = Math.max(1, (object.size || 8) * 0.13);
+    const radius = Math.max(0.5, (object.size || 8) / 2);
+    for (const point of points) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (points.length < 2) { ctx.restore(); return; }
+  ctx.lineWidth = object.size;
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   if (object.type === "pen" && points.length > 2) {
@@ -160,15 +174,26 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
 }
 
 function drawObjectHalo(object, offset, selected) {
-  if (!object || object.points.length < 2) return;
+  if (!object || !object.points?.length) return;
   const { ctx } = state;
   const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
-  if (points.length < 2) return;
+  if (!points.length) return;
   ctx.save();
   ctx.strokeStyle = selected ? "rgba(30, 80, 190, 0.42)" : "rgba(30, 30, 30, 0.20)";
   ctx.lineWidth = Math.max((object.size || 1) + (selected ? 9 : 6), 8 / state.view.zoom);
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
+  if (object.type === "dot") {
+    const radius = Math.max(0.5, (object.size || 8) / 2) + (selected ? 5 : 3) / state.view.zoom;
+    for (const point of points) {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+  if (points.length < 2) { ctx.restore(); return; }
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
@@ -321,9 +346,26 @@ export function redraw(preview = state.previewObject) {
   const quality = analyzeSurfaceQuality(state.surface);
   const offsets = visibleOffsets(state);
   const denseMode = quality.dense || offsets.length >= 4000;
-  for (const offset of offsets) drawCellImage(offset);
+  const layers = Array.isArray(state.layers) && state.layers.length ? state.layers : [{ id: "layer-1", type: "drawing", opacity: 1, visible: true }];
+
+  for (const layer of layers) {
+    if (layer.visible === false || layer.type !== "image") continue;
+    for (const offset of offsets) drawCellImage(offset, layer);
+  }
+
   drawGrid(offsets, denseMode);
-  for (const object of state.objects) for (const offset of offsets) drawObject(object, offset);
+
+  for (const layer of layers) {
+    if (layer.visible === false || layer.type !== "drawing") continue;
+    state.ctx.save();
+    state.ctx.globalAlpha = layer.opacity ?? 1;
+    for (const object of state.objects) {
+      if ((object.layerId || "layer-1") !== layer.id) continue;
+      for (const offset of offsets) drawObject(object, offset);
+    }
+    state.ctx.restore();
+  }
+
   drawHomologyDirectionArrows();
   drawHomologyOverlay(offsets);
   if (preview) for (const offset of offsets) drawObject(preview, offset, true);

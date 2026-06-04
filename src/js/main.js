@@ -1,29 +1,33 @@
 // App bootstrap: wires modules together and keeps the UI behavior calm and predictable.
 import { collectDom, closeFloatingPanelsOnly, closePanels, openPanel, showStatus } from "./dom.js";
 import { state } from "./state.js";
-import { chooseTool, handleSpace, movePointer, saveCurrentSize, setEraserMode, startPointer, stopPointer } from "./drawing.js";
+import { chooseTool, handleSpace, handleTemporaryDot, movePointer, saveCurrentSize, setEraserMode, startPointer, stopPointer } from "./drawing.js";
 import { clearDrawing, redo, undo, updateHistoryButtons } from "./history.js";
 import { drawPreview3d, initPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { requestRender, resizeCanvas } from "./render2d.js";
-import { applySurface, centerView, exportPNG, fitCellToView, fitSurfaceToImage, loadImageFile, readSurfaceControls, removeImage, resetSurface, setImageFitMode, setImageOpacity, setZoom, sliderToZoom, syncImageUi, syncZoomSlider, syncEdgeUi, toggleEdgePair, writeSurfaceControls } from "./surface.js";
+import { applySurface, applySurfacePreset, centerView, exportPNG, fitCellToView, fitSurfaceToImage, loadImageFile, readSurfaceControls, removeImage, resetSurface, setImageFitMode, setImageOpacity, setZoom, sliderToZoom, syncImageUi, syncZoomSlider, syncEdgeUi, toggleEdgePair, writeSurfaceControls } from "./surface.js";
 import { openProjectFile, resetEverything, restoreAutosave, saveProject, scheduleAutosave } from "./storage.js";
+import { addDrawingLayer, ensureLayerModel, moveSelectedLayer, removeSelectedLayer, renderLayerPanel, setSelectedLayerOpacity, toggleLayerVisibility, activeLayer } from "./layers.js";
 
 collectDom();
+ensureLayerModel();
 initPreview3d();
 
-function refreshSizeInput() { state.ui.sizeInput.value = state.tool === "erase" ? state.eraserSize : state.penSize; }
+function refreshSizeInput() {
+  state.ui.sizeInput.value = state.tool === "erase" ? state.eraserSize : state.tool === "dot" ? state.dotSize : state.penSize;
+}
 function blurSizeInput() { state.ui.sizeInput.blur(); saveCurrentSize(); }
 
-function syncPreviewOpacityUi() {
-  if (!state.ui.preview3dOpacityInput || !state.ui.preview3dOpacityValue) return;
-  const percent = Math.round((state.preview.opacity ?? 1) * 100);
-  state.ui.preview3dOpacityInput.value = String(percent);
-  state.ui.preview3dOpacityValue.textContent = `${percent}%`;
+function syncPreviewTransparencyUi() {
+  if (!state.ui.preview3dTransparencyInput) return;
+  state.ui.preview3dTransparencyInput.checked = state.preview.transparent !== false;
+  state.preview.opacity = state.preview.transparent === false ? 1.0 : 0.8;
 }
 
-function setPreviewOpacity(value) {
-  state.preview.opacity = Math.max(0.2, Math.min(1, Number(value) / 100 || 1));
-  syncPreviewOpacityUi();
+function setPreviewTransparency(enabled) {
+  state.preview.transparent = Boolean(enabled);
+  state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
+  syncPreviewTransparencyUi();
   drawPreview3d();
 }
 
@@ -60,9 +64,11 @@ function handleKeyDown(event) {
   if (cmd && key === "z") { event.preventDefault(); return undo(); }
   if (cmd && key === "y") { event.preventDefault(); return redo(); }
   if (isTextField(event.target) || cmd) return;
+  if (key === "d") { handleTemporaryDot(event, true); return; }
 
   if (code === "Digit1" || key === "1" || key === "p") chooseTool("pen");
   else if (code === "Digit2" || key === "2" || key === "l") chooseTool("line");
+  else if (code === "Digit6" || key === "6") chooseTool("dot");
   else if (code === "Digit3" || key === "3") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
   else if (code === "Digit4" || key === "4" || key === "v") chooseTool("pan");
   else if (code === "Digit5" || key === "5") chooseTool("hom");
@@ -73,7 +79,7 @@ function handleKeyDown(event) {
   else if (key === "g") openPanel("surface");
   else if (key === "u") { if (applySurface(readSurfaceControls())) resetPreviewAngle(); }
   else if (key === "h") { state.hideGrid = !state.hideGrid; state.ui.hideGridInput.checked = state.hideGrid; showStatus(state.hideGrid ? "Grid hidden." : "Grid shown."); requestRender(); }
-  else if (key === "i") openPanel("image");
+  else if (key === "i") { renderLayerPanel(); openPanel("image"); }
   else if (key === "?") openPanel("help");
   else if (key === "escape") closePanels();
   else if (key === "+" || key === "=") setZoom(state.view.zoom * 1.18);
@@ -84,6 +90,7 @@ function isTextField(el) { return el && ["INPUT", "TEXTAREA", "SELECT"].includes
 function wireToolbar() {
   state.ui.penButton.onclick = () => chooseTool("pen");
   state.ui.lineButton.onclick = () => chooseTool("line");
+  state.ui.dotButton.onclick = () => chooseTool("dot");
   state.ui.eraseButton.onclick = () => chooseTool("erase");
   state.ui.homButton.onclick = () => chooseTool("hom");
   state.ui.panButton.onclick = () => chooseTool("pan");
@@ -93,15 +100,27 @@ function wireToolbar() {
   state.ui.redoButton.onclick = redo;
   state.ui.clearButton.onclick = clearDrawing;
   state.ui.surfaceButton.onclick = () => openPanel("surface");
-  state.ui.imageButton.onclick = () => openPanel("image");
+  state.ui.imageButton.onclick = () => { renderLayerPanel(); openPanel("image"); };
   state.ui.preview3dButton.onclick = openPreview3dWithNoticeIfNeeded;
   state.ui.preview3dCloseButton.onclick = () => state.ui.preview3dPanel.classList.remove("open");
   state.ui.preview3dWarningCloseButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
   state.ui.preview3dWarningCancelButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
   state.ui.preview3dWarningViewButton.onclick = viewPreview3dAnyway;
-  if (state.ui.preview3dOpacityInput) state.ui.preview3dOpacityInput.oninput = e => setPreviewOpacity(e.target.value);
+  if (state.ui.preview3dTransparencyInput) state.ui.preview3dTransparencyInput.onchange = e => setPreviewTransparency(e.target.checked);
   state.ui.helpButton.onclick = () => openPanel("help");
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
+  if (state.ui.imageLayerVisibilityButton) state.ui.imageLayerVisibilityButton.onclick = () => toggleLayerVisibility("image-background");
+  state.ui.addLayerButton.onclick = () => addDrawingLayer();
+  state.ui.layerOpacityInput.oninput = e => setSelectedLayerOpacity(e.target.value);
+  state.ui.layerOpacityInput.addEventListener("pointerdown", e => e.stopPropagation());
+  state.ui.layerOpacityInput.addEventListener("click", e => e.stopPropagation());
+  state.ui.layerVisibleButton.onclick = () => {
+    const layer = activeLayer();
+    if (layer) toggleLayerVisibility(layer.id);
+  };
+  state.ui.deleteLayerButton.onclick = removeSelectedLayer;
+  state.ui.moveLayerUpButton.onclick = () => moveSelectedLayer(1);
+  state.ui.moveLayerDownButton.onclick = () => moveSelectedLayer(-1);
   state.ui.exportButton.onclick = exportPNG;
   state.ui.saveProjectButton.onclick = saveProject;
   state.ui.projectInput.onchange = e => openProjectFile(e.target.files[0]);
@@ -109,6 +128,10 @@ function wireToolbar() {
 
 function wireSurfaceAndImage() {
   state.ui.updateSurfaceButton.onclick = () => { if (applySurface(readSurfaceControls())) resetPreviewAngle(); };
+  state.ui.presetDefaultButton.onclick = () => { if (applySurfacePreset("default")) resetPreviewAngle(); };
+  state.ui.presetSquareButton.onclick = () => { if (applySurfacePreset("square")) resetPreviewAngle(); };
+  state.ui.presetRhombusButton.onclick = () => { if (applySurfacePreset("rhombus")) resetPreviewAngle(); };
+  state.ui.presetGoldenButton.onclick = () => { if (applySurfacePreset("golden")) resetPreviewAngle(); };
   state.ui.resetSurfaceButton.onclick = () => { resetSurface(); resetPreviewAngle(); };
   state.ui.centerViewButton.onclick = centerView;
   state.ui.fitCellButton.onclick = fitCellToView;
@@ -119,7 +142,14 @@ function wireSurfaceAndImage() {
   state.ui.removeImageButton.onclick = removeImage;
   state.ui.imageCropButton.onclick = () => setImageFitMode("crop");
   state.ui.imageStretchButton.onclick = () => setImageFitMode("stretch");
-  state.ui.imageOpacityInput.oninput = e => setImageOpacity(e.target.value);
+  if (state.ui.imageOpacityInput) {
+    const updateImageOpacity = e => setImageOpacity(e.target.value);
+    state.ui.imageOpacityInput.addEventListener("input", updateImageOpacity);
+    state.ui.imageOpacityInput.addEventListener("change", updateImageOpacity);
+    state.ui.imageOpacityInput.addEventListener("pointerdown", e => e.stopPropagation(), { capture: true });
+    state.ui.imageOpacityInput.addEventListener("pointermove", e => e.stopPropagation(), { capture: true });
+    state.ui.imageOpacityInput.addEventListener("click", e => e.stopPropagation(), { capture: true });
+  }
   state.ui.fitSurfaceToImageButton.onclick = () => { fitSurfaceToImage(); resetPreviewAngle(); };
 }
 
@@ -142,13 +172,16 @@ state.ui.zoomSlider.oninput = () => setZoom(sliderToZoom(state.ui.zoomSlider.val
 state.ui.zoomInButton.onclick = () => setZoom(state.view.zoom * 1.18);
 state.ui.zoomOutButton.onclick = () => setZoom(state.view.zoom / 1.18);
 document.addEventListener("keydown", handleKeyDown);
-document.addEventListener("keyup", event => handleSpace(event, false));
+document.addEventListener("keyup", event => {
+  handleSpace(event, false);
+  handleTemporaryDot(event, false);
+});
 window.addEventListener("resize", () => { resizeCanvas(); drawPreview3d(); });
 // Leaving the Size block commits the number, so shortcuts immediately work again.
 document.addEventListener("pointerdown", event => {
   if (!state.ui.sizeBlock.contains(event.target)) blurSizeInput();
 }, { capture: true });
 
-writeSurfaceControls(); syncEdgeUi(); syncImageUi(); syncPreviewOpacityUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
+writeSurfaceControls(); syncEdgeUi(); syncImageUi(); renderLayerPanel(); syncPreviewTransparencyUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
 chooseTool("pen"); setEraserMode("object");
 restoreAutosave().then(() => { refreshSizeInput(); requestRender(); drawPreview3d(); });

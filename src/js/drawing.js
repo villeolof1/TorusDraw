@@ -3,11 +3,12 @@ import { state, cloneObjects } from "./state.js";
 import { add, clamp, length, screenToWorld, sub, visibleOffsets, worldToBaseFromCell, worldToBasis } from "./math.js";
 import { hideAngleHint, showAngleHint } from "./dom.js";
 import { addObject, replaceAll } from "./history.js";
+import { activeDrawingLayer, visibleLayerOpacity } from "./layers.js";
 import { redraw, requestRender } from "./render2d.js";
 
 const SNAP = Math.PI / 12;
 let isDrawing = false, isPanning = false, startPoint = null, currentObject = null;
-let panStart = null, viewStart = null, eraseBefore = null, eraseChanged = false, spaceDown = false;
+let panStart = null, viewStart = null, eraseBefore = null, eraseChanged = false, spaceDown = false, temporaryDotDown = false;
 
 function pointerPoint(event) {
   const box = state.canvas.getBoundingClientRect();
@@ -21,19 +22,34 @@ function worldFromEvent(event) {
   return p;
 }
 function currentStyle() { return { color: state.ui.colorInput.value, size: Number(state.ui.sizeInput.value) || 1 }; }
+function dotStyle() { return { color: state.ui.colorInput.value, size: Math.max(1, state.dotSize || 8) }; }
+
+function stampDot(event) {
+  const point = worldFromEvent(event);
+  const object = {
+    id: state.nextObjectId++,
+    type: "dot",
+    layerId: activeDrawingLayer().id,
+    points: [point],
+    ...dotStyle()
+  };
+  addObject(object);
+}
+
 
 export function chooseTool(tool) {
   saveCurrentSize();
   state.tool = tool;
   state.ui.penButton.classList.toggle("active", tool === "pen");
   state.ui.lineButton.classList.toggle("active", tool === "line");
+  state.ui.dotButton.classList.toggle("active", tool === "dot");
   state.ui.eraseButton.classList.toggle("active", tool === "erase");
   state.ui.homButton.classList.toggle("active", tool === "hom");
   state.ui.panButton.classList.toggle("active", tool === "pan");
   setEraserOptionsVisible(tool === "erase");
   state.canvas.classList.toggle("panning", tool === "pan" || spaceDown);
   state.canvas.classList.toggle("homing", tool === "hom");
-  state.ui.sizeInput.value = tool === "erase" ? state.eraserSize : state.penSize;
+  state.ui.sizeInput.value = tool === "erase" ? state.eraserSize : tool === "dot" ? state.dotSize : state.penSize;
   if (tool !== "hom") {
     state.homHoverId = null;
     state.homSelectedId = null;
@@ -57,6 +73,7 @@ function setEraserOptionsVisible(visible) {
 export function saveCurrentSize() {
   const value = Math.max(1, Number(state.ui.sizeInput.value) || 1);
   if (state.tool === "erase") state.eraserSize = value;
+  if (state.tool === "dot") state.dotSize = value;
   if (state.tool === "pen" || state.tool === "line") state.penSize = value;
 }
 
@@ -84,6 +101,9 @@ function distanceToSegment(p, a, b) {
 }
 function hitObject(object, localPoint, radius) {
   const threshold = radius + (object.size || 1) / 2;
+  if (object.type === "dot") {
+    return object.points.some(point => length(sub(localPoint, point)) <= threshold);
+  }
   for (let i = 1; i < object.points.length; i++) if (distanceToSegment(localPoint, object.points[i - 1], object.points[i]) <= threshold) return true;
   return false;
 }
@@ -98,6 +118,7 @@ function localHitPoint(object, worldPoint, radius) {
 function objectHitAt(worldPoint, radius = 12 / Math.max(0.2, state.view.zoom)) {
   let best = null;
   for (const object of state.objects) {
+    if (visibleLayerOpacity(object.layerId || "layer-1") <= 0) continue;
     for (const offset of visibleOffsets(state)) {
       const local = worldToBaseFromCell(worldPoint, state.surface, offset);
       if (local && hitObject(object, local, radius)) best = { object, offset };
@@ -115,6 +136,10 @@ function updateHomHover(worldPoint) {
 
 function splitByRubEraser(object, point, radius) {
   const threshold = radius + (object.size || 1) * 0.6;
+  if (object.type === "dot") {
+    const points = object.points.filter(p => length(sub(p, point)) > threshold).map(p => ({ ...p }));
+    return points.length ? [{ ...object, points }] : [];
+  }
   const chunks = []; let chunk = [], changed = false;
   for (const p of object.points) {
     if (length(sub(p, point)) <= threshold) { changed = true; if (chunk.length >= 2) chunks.push(chunk); chunk = []; }
@@ -128,6 +153,7 @@ function applyEraser(worldPoint) {
   const radius = Math.max(1, Number(state.ui.sizeInput.value) || state.eraserSize) / 2;
   const next = [];
   for (const object of state.objects) {
+    if (visibleLayerOpacity(object.layerId || "layer-1") <= 0) { next.push(object); continue; }
     const local = localHitPoint(object, worldPoint, radius);
     if (!local) { next.push(object); continue; }
     eraseChanged = true;
@@ -153,10 +179,18 @@ export function startPointer(event) {
   if (state.tool === "pan" || spaceDown) {
     isPanning = true; panStart = screen; viewStart = { ...state.view }; state.canvas.classList.add("active-pan"); return;
   }
+  if (temporaryDotDown || state.tool === "dot") {
+    saveCurrentSize();
+    stampDot(event);
+    isDrawing = false;
+    currentObject = null;
+    startPoint = null;
+    return;
+  }
   isDrawing = true;
   if (state.tool === "erase") { eraseBefore = cloneObjects(state.objects); eraseChanged = false; applyEraser(screenToWorld(screen, state.view, state.cssWidth, state.cssHeight)); return; }
   startPoint = worldFromEvent(event);
-  currentObject = { id: state.nextObjectId++, type: state.tool, points: [startPoint], ...currentStyle() };
+  currentObject = { id: state.nextObjectId++, type: state.tool, layerId: activeDrawingLayer().id, points: [startPoint], ...currentStyle() };
 }
 
 export function movePointer(event) {
@@ -196,4 +230,13 @@ export function stopPointer(event) {
 export function handleSpace(event, down) {
   if (event.key !== " ") return;
   event.preventDefault(); spaceDown = down; state.canvas.classList.toggle("panning", state.tool === "pan" || spaceDown);
+}
+
+
+export function handleTemporaryDot(event, down) {
+  if (event.key.toLowerCase() !== "d") return false;
+  event.preventDefault();
+  temporaryDotDown = down;
+  state.canvas.classList.toggle("temporary-dot", temporaryDotDown);
+  return true;
 }

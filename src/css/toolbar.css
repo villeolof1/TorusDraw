@@ -136,3 +136,5 @@
   .floating-help-button, .floating-shape-button { right: 12px; }
   #status { top: 72px; }
 }
+
+#drawingCanvas.temporary-dot { cursor: copy; }

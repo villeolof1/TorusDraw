@@ -25,6 +25,7 @@ export const state = {
   tool: "pen",
   eraserMode: "object",
   penSize: 4,
+  dotSize: 20,
   eraserSize: 20,
 
   view: { x: 300, y: -210, zoom: 0.9 },
@@ -35,7 +36,16 @@ export const state = {
   imageFitMode: "crop",
   imageOpacity: 0.9,
 
-  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, opacity: 1.0, dragging: false, last: null, enhanced: true },
+  // Layers are stored back-to-front. The image layer starts at the back;
+  // new drawing layers are added at the front.
+  layers: [
+    { id: "image-background", type: "image", name: "Image", opacity: 0.9, visible: true },
+    { id: "layer-1", type: "drawing", name: "Layer 1", opacity: 1, visible: true }
+  ],
+  activeLayerId: "layer-1",
+  nextLayerId: 2,
+
+  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, transparent: true, opacity: 0.8, dragging: false, last: null, enhanced: true },
   renderQueued: false,
   statusTimer: null,
   autosaveTimer: null,

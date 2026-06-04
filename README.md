@@ -221,3 +221,44 @@ The 3D preview surface mesh now renders at about 80% opacity, giving all 3D mode
 ## Latest 3D opacity slider update
 
 The 3D preview now includes a Model opacity slider inside the 3D panel. It defaults to 100%. Lowering opacity makes the surface translucent; when translucency is active, the surface avoids depth-writing so overlapping transparent walls are less likely to look abruptly cut off.
+
+
+## Latest layers, presets, and cleaner complex previews update
+
+This version adds a fast Layers panel in place of the old Image panel. The uploaded image is now represented as the Image layer, drawing layers can be added in front, layers can be hidden/shown, reordered, removed, and adjusted for opacity. Drawing objects now store a `layerId`, and the 2D canvas plus 3D preview composite visible layers in layer order.
+
+The Surface panel now includes a compact preset row:
+- Default rectangle
+- Square
+- 60° rhombus / triangular lattice cell
+- Golden rectangle
+
+The complex reversed-link 3D previews now use cleaner presentation maps for Möbius/Klein-style surfaces, reducing visually chaotic self-intersection while keeping the same coordinate-based texture/grid pipeline.
+## Latest layer-drag and dot-tool update
+
+This version makes layer reordering feel much smoother: a drawing layer can be grabbed from anywhere on its row, follows the pointer as a floating card, and shows a live drop placeholder before release. The image layer is now a fixed background section under the drawing-layer stack instead of a draggable drawing layer.
+
+A new Dot tool has been added. It remembers its own size separately from pen and eraser, defaults small, and stamps outline-only circles wherever you press or drag. The 3D preview line rendering was also densified before seam splitting so straight lines are less likely to miss segments on the model.
+## Latest refinement
+
+This version refines the Layers and Dot workflows:
+
+- The fixed Image/background section has its own opacity control again.
+- Drawing layers can be dragged from anywhere on the card.
+- During layer dragging, the whole card follows the pointer and a same-sized shadow placeholder shows the drop position.
+- The Dot tool is visible between Erase and Pan.
+- Dot mode is available with `6`.
+- Holding `D` temporarily stamps one outline circle without switching tools.
+- A dot press always creates exactly one outline circle, even if the pointer moves before release.
+
+## Latest background-opacity and layer-drag fix
+
+This version fixes the background opacity slider so it can be dragged normally. It also makes layer reordering more physical: the original card no longer stays in place while dragging; a floating card follows the pointer, and a same-size shadow placeholder shows where the card will snap on release. Dot default size is now 20.
+
+## Latest image opacity fix
+
+This version fixes the image/background opacity control so it updates the fixed image layer directly and redraws both the 2D canvas and 3D preview immediately. The slider no longer depends on rebuilding the Layers panel while being dragged.
+
+## Latest 3D transparency toggle update
+
+The 3D preview now uses a simple Transparent model toggle instead of the opacity slider. The toggle is on by default. When it is off, the model is fully opaque; when it is on, the model uses the app's subtle transparent preview setting.

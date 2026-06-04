@@ -274,16 +274,40 @@ function addLocalGridPath(out, map, fn, halfWidth, color) {
   pushRibbon(out, samples, map, halfWidth, 0.0005, color);
 }
 
+function objectUvPoints(object, domain) {
+  return (object.points || []).map(point => domain.worldToCell(point)).filter(Boolean);
+}
+
+function densifyUvPath(points, maxStep = 0.035) {
+  if (points.length < 2) return points.map(point => ({ ...point }));
+  const dense = [{ ...points[0] }];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1];
+    const b = points[i];
+    const distance = Math.hypot((b.u || 0) - (a.u || 0), (b.v || 0) - (a.v || 0));
+    const steps = Math.max(1, Math.ceil(distance / maxStep));
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      dense.push({ u: a.u + (b.u - a.u) * t, v: a.v + (b.v - a.v) * t });
+    }
+  }
+  return dense;
+}
+
 function buildStrokeMesh(map, domain) {
   const out = [];
   for (const object of state.objects) {
     if (!object.points || object.points.length < 2) continue;
+    const layer = layerForObject(object);
+    if (layer?.visible === false) continue;
+    if (object.type === "dot") continue;
     if ((object.size || 1) > LARGE_STROKE_TEXTURE_ONLY) continue;
-    const uvPoints = object.points.map(point => domain.worldToCell(point)).filter(Boolean);
+    const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
     const paths = domain.splitPolylineByGluing(uvPoints);
     const color = cssColorToRgba(object.color || "#111111");
+    color[3] *= layer ? (layer.opacity ?? 1) : 1;
     const halfWidth = strokeHalfWidth(object, map);
-    if (halfWidth == null) continue;
+    if (halfWidth == null || color[3] <= 0) continue;
     for (const path of paths) {
       if (path.length < 2) continue;
       pushRibbon(out, path, map, halfWidth, 0.0014, color);
@@ -363,10 +387,11 @@ function drawMesh(data, options) {
 function buildCellTextureSignature(domain) {
   const surface = state.surface;
   const image = state.background.image;
+  const layerSignature = (state.layers || []).map(layer => `${layer.id}:${layer.type}:${layer.visible !== false ? 1 : 0}:${round4(layer.opacity ?? 1)}:${layer.name}`).join(",");
   const objects = state.objects.map(object => {
     const first = object.points[0] || { x: 0, y: 0 };
     const last = object.points[object.points.length - 1] || { x: 0, y: 0 };
-    return `${object.id}|${object.type}|${object.color}|${object.size}|${object.points.length}|${round4(first.x)}|${round4(first.y)}|${round4(last.x)}|${round4(last.y)}`;
+    return `${object.id}|${object.layerId || "layer-1"}|${object.type}|${object.color}|${object.size}|${object.points.length}|${round4(first.x)}|${round4(first.y)}|${round4(last.x)}|${round4(last.y)}`;
   }).join(";");
   const links = [
     surface.edgeLinks?.v1?.active ? 1 : 0,
@@ -382,14 +407,19 @@ function buildCellTextureSignature(domain) {
     state.imageFitMode,
     round4(state.imageOpacity),
     image ? `${state.background.naturalWidth}x${state.background.naturalHeight}` : "no-image",
+    layerSignature,
     links,
     objects
   ].join("|");
 }
 
 function ensureCellTexture(domain) {
-  const hasPaint = state.objects.length > 0;
-  const hasImage = !!state.background.image;
+  const hasPaint = state.objects.some(object => {
+    const layer = layerForObject(object);
+    return layer?.visible !== false && (layer?.opacity ?? 1) > 0;
+  });
+  const imageLayer = layerByType("image");
+  const hasImage = !!state.background.image && imageLayer?.visible !== false && (imageLayer?.opacity ?? 1) > 0;
   if (!hasPaint && !hasImage) {
     cachedTextureSignature = "";
     cachedBackgroundImage = null;
@@ -423,8 +453,15 @@ function buildCompositeCellCanvas(domain) {
   ctx.fillStyle = "#fffdf8";
   ctx.fillRect(0, 0, cellCanvas.width, cellCanvas.height);
 
-  if (state.background.image) drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height);
-  drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height);
+  const layers = Array.isArray(state.layers) && state.layers.length ? state.layers : [{ id: "layer-1", type: "drawing", opacity: 1, visible: true }];
+  for (const layer of layers) {
+    if (layer.visible === false || (layer.opacity ?? 1) <= 0) continue;
+    ctx.save();
+    ctx.globalAlpha = layer.opacity ?? 1;
+    if (layer.type === "image" && state.background.image) drawBackgroundTexture(ctx, cellCanvas.width, cellCanvas.height, false);
+    if (layer.type === "drawing") drawObjectsToTexture(ctx, domain, cellCanvas.width, cellCanvas.height, layer);
+    ctx.restore();
+  }
   return cellCanvas;
 }
 
@@ -443,13 +480,13 @@ function compositeTextureSize() {
   };
 }
 
-function drawBackgroundTexture(ctx, width, height) {
+function drawBackgroundTexture(ctx, width, height, applyOpacity = true) {
   const image = state.background.image;
   if (!image) return;
   const iw = state.background.naturalWidth || image.naturalWidth || 1;
   const ih = state.background.naturalHeight || image.naturalHeight || 1;
   ctx.save();
-  ctx.globalAlpha = clamp(state.imageOpacity, 0, 1);
+  if (applyOpacity) ctx.globalAlpha = clamp(state.imageOpacity, 0, 1);
   if (state.imageFitMode === "stretch") {
     ctx.drawImage(image, 0, 0, iw, ih, 0, 0, width, height);
     ctx.restore();
@@ -469,7 +506,7 @@ function drawBackgroundTexture(ctx, width, height) {
   ctx.restore();
 }
 
-function drawObjectsToTexture(ctx, domain, width, height) {
+function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
   const pixelsPerU = width;
   const pixelsPerV = height;
   // Conservative metric rasterization: for extreme/skewed cells, using the
@@ -478,14 +515,31 @@ function drawObjectsToTexture(ctx, domain, width, height) {
   const pixelsPerWorld = Math.max(pixelsPerU / Math.max(1, length(state.surface.v1)), pixelsPerV / Math.max(1, length(state.surface.v2)));
 
   for (const object of state.objects) {
-    if (!object.points || object.points.length < 2) continue;
-    const uvPoints = object.points.map(point => domain.worldToCell(point)).filter(Boolean);
-    const paths = domain.splitPolylineByGluing(uvPoints);
-    if (!paths.length) continue;
+    if (layer && (object.layerId || "layer-1") !== layer.id) continue;
+    if (!object.points?.length) continue;
     ctx.save();
     ctx.strokeStyle = object.color || "#111111";
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
+
+    if (object.type === "dot") {
+      ctx.lineWidth = Math.max(1, (object.size || 8) * pixelsPerWorld * 0.13);
+      const radius = Math.max(1, (object.size || 8) * pixelsPerWorld / 2);
+      for (const rawUv of objectUvPoints(object, domain)) {
+        const uv = domain.normalizeUV ? domain.normalizeUV(rawUv) : rawUv;
+        const point = texturePoint(uv, width, height);
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+      ctx.restore();
+      continue;
+    }
+
+    if (object.points.length < 2) { ctx.restore(); continue; }
+    const uvPoints = densifyUvPath(objectUvPoints(object, domain), object.type === "line" ? 0.018 : 0.035);
+    const paths = domain.splitPolylineByGluing(uvPoints);
+    if (!paths.length) { ctx.restore(); continue; }
     ctx.lineWidth = Math.max(1, (object.size || 1) * pixelsPerWorld);
 
     for (const path of paths) {
@@ -591,6 +645,14 @@ function drawFallback() {
   ctx.fillStyle = "#6f6a60";
   ctx.font = "14px system-ui, sans-serif";
   ctx.fillText("3D preview needs WebGL in this browser.", 18, 32);
+}
+
+function layerByType(type) {
+  return (state.layers || []).find(layer => layer.type === type);
+}
+
+function layerForObject(object) {
+  return (state.layers || []).find(layer => layer.id === (object.layerId || "layer-1"));
 }
 
 function cssColorToRgba(value) {

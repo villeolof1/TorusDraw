@@ -33,7 +33,7 @@
     </section>
 
     <section id="sideLauncher" aria-label="Surface and image sections">
-      <button id="imageButton" class="ghost-button" title="Image settings — I">Image</button>
+      <button id="imageButton" class="ghost-button" title="Layers — I">Layers</button>
       <button id="surfaceButton" class="ghost-button" title="Surface settings — G">Surface</button>
     </section>
 
@@ -53,6 +53,7 @@
       <div class="tool-group primary-tools">
         <button id="penButton" class="tool-button active" title="Pen — 1 or P">Pen</button>
         <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
+        <button id="dotButton" class="tool-button" title="Dot — 6. Hold D for one temporary dot.">Dot</button>
         <button id="eraseButton" class="tool-button" title="Erase — 3 or E. Shift+3 toggles eraser mode. Shift+E also works.">Erase</button>
         <div id="eraserOptions" class="tool-group eraser-options" hidden>
           <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
@@ -68,6 +69,16 @@
       <p class="panel-copy">
         Copies use v1 = (a1, b1) and v2 = (a2, b2). Positive a goes right; positive b goes up. Typed changes apply only when you click Update surface.
       </p>
+      <div class="surface-section preset-section">
+        <div class="surface-section-title">Presets</div>
+        <div class="preset-row">
+          <button id="presetDefaultButton" class="mini-toggle" type="button">Default</button>
+          <button id="presetSquareButton" class="mini-toggle" type="button">Square</button>
+          <button id="presetRhombusButton" class="mini-toggle" type="button">60° Rhombus</button>
+          <button id="presetGoldenButton" class="mini-toggle" type="button">Golden</button>
+        </div>
+      </div>
+
       <div class="vector-grid">
         <label>a1 <input id="a1Input" type="number" value="600" step="10" /></label>
         <label>b1 <input id="b1Input" type="number" value="0" step="10" /></label>
@@ -96,37 +107,62 @@
       </div>
     </section>
 
-    <section id="imagePanel" class="panel image-panel" aria-label="Image controls">
+    <section id="imagePanel" class="panel image-panel layers-panel" aria-label="Layer controls">
       <div class="panel-title-row">
         <div>
-          <div class="panel-title">Image</div>
-          <div id="imageSummary" class="panel-subtitle">No image added</div>
+          <div class="panel-title">Layers</div>
+          <div id="imageSummary" class="panel-subtitle">Image and drawing layers</div>
         </div>
-        <button id="imageCloseButton" class="mini-close" aria-label="Close image panel">×</button>
+        <button id="imageCloseButton" class="mini-close" aria-label="Close layers panel">×</button>
+      </div>
+
+      <div class="surface-section layer-stack-section">
+        <div class="layer-panel-toolbar">
+          <button id="addLayerButton" class="primary-button" type="button">+ Layer</button>
+          <button id="moveLayerUpButton" class="ghost-button" type="button" title="Move selected layer forward">Up</button>
+          <button id="moveLayerDownButton" class="ghost-button" type="button" title="Move selected layer backward">Down</button>
+        </div>
+        <div id="layerList" class="layer-list" aria-label="Layer stack"></div>
+      </div>
+
+      <div class="surface-section selected-layer-section">
+        <div class="surface-section-title">Selected layer</div>
+        <div id="selectedLayerName" class="selected-layer-name">Layer 1</div>
+        <label class="opacity-control">
+          <input id="layerOpacityInput" type="range" min="0" max="100" value="100" />
+          <span id="layerOpacityValue">100%</span>
+        </label>
+        <div class="layer-action-row">
+          <button id="layerVisibleButton" class="ghost-button" type="button">Hide</button>
+          <button id="deleteLayerButton" class="ghost-button danger" type="button">Remove layer</button>
+        </div>
       </div>
 
       <div class="surface-section image-actions-section">
+        <div class="surface-section-title">Image layer</div>
+        <div id="imageLayerCard" class="image-layer-card">
+          <span id="imageLayerThumb" class="layer-thumb"></span>
+          <span id="imageLayerStatus" class="layer-name">Image is always behind drawing layers</span>
+          <button id="imageLayerVisibilityButton" class="ghost-button" type="button">Hide</button>
+        </div>
         <label class="upload-button panel-wide-button image-upload-control" title="Upload or replace image">
           Upload / replace image
           <input id="backgroundInput" type="file" accept="image/*" />
         </label>
         <button id="removeImageButton" class="ghost-button panel-wide-button" type="button">Remove image</button>
-      </div>
-
-      <div class="surface-section">
-        <div class="surface-section-title">Fit mode</div>
-        <div class="segmented-control" aria-label="Image fit mode">
-          <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
-          <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
-        </div>
-      </div>
-
-      <div class="surface-section">
-        <div class="surface-section-title">Opacity</div>
+        <div class="surface-section-title image-opacity-title">Background opacity</div>
         <label class="opacity-control">
           <input id="imageOpacityInput" type="range" min="15" max="100" value="90" />
           <span id="opacityValue">90%</span>
         </label>
+      </div>
+
+      <div class="surface-section">
+        <div class="surface-section-title">Image fit mode</div>
+        <div class="segmented-control" aria-label="Image fit mode">
+          <button id="imageCropButton" class="mini-toggle active" type="button" title="Preserve proportions and crop overflow">Crop</button>
+          <button id="imageStretchButton" class="mini-toggle" type="button" title="Stretch image to the cell, including skewed cells">Stretch</button>
+        </div>
       </div>
 
       <div class="surface-section">
@@ -144,10 +180,9 @@
       </div>
       <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
       <div class="surface-section preview-opacity-section">
-        <div class="surface-section-title">Model opacity</div>
-        <label class="opacity-control">
-          <input id="preview3dOpacityInput" type="range" min="20" max="100" value="100" />
-          <span id="preview3dOpacityValue">100%</span>
+        <label class="preview-toggle-control" title="When on, the model is subtly transparent.">
+          <span>Transparent model</span>
+          <input id="preview3dTransparencyInput" type="checkbox" checked />
         </label>
       </div>
     </section>
@@ -179,6 +214,8 @@
         <div><kbd>Shift+3</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
         <div><kbd>4</kbd> / <kbd>V</kbd></div><div>Pan</div>
         <div><kbd>5</kbd></div><div>Homology tool</div>
+        <div><kbd>6</kbd></div><div>Dot tool</div>
+        <div><kbd>Hold D</kbd></div><div>Temporary dot</div>
         <div><kbd>Shift</kbd></div><div>Line snap, 15°</div>
         <div><kbd>Alt</kbd></div><div>Line from center</div>
         <div><kbd>Space</kbd></div><div>Temporary pan</div>
@@ -189,7 +226,7 @@
         <div><kbd>G</kbd></div><div>Surface panel</div>
         <div><kbd>U</kbd></div><div>Update surface</div>
         <div><kbd>H</kbd></div><div>Toggle grid</div>
-        <div><kbd>I</kbd></div><div>Image panel</div>
+        <div><kbd>I</kbd></div><div>Layers panel</div>
         <div><kbd>?</kbd></div><div>Help</div>
         <div><kbd>Ctrl/Cmd+S</kbd></div><div>Save project</div>
         <div><kbd>Esc</kbd></div><div>Close panels</div>

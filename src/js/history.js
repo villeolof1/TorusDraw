@@ -3,6 +3,7 @@ import { state, cloneObject, cloneObjects } from "./state.js";
 import { requestRender } from "./render2d.js";
 import { scheduleAutosave } from "./storage.js";
 import { drawPreview3d } from "./preview3d.js";
+import { restoreLayerSnapshot, renderLayerPanel } from "./layers.js";
 
 export function updateHistoryButtons() {
   state.ui.undoButton.disabled = state.undoStack.length === 0;
@@ -16,6 +17,7 @@ export function addObject(object) {
   state.redoStack = [];
   updateHistoryButtons();
   scheduleAutosave();
+  renderLayerPanel();
   requestRender();
   drawPreview3d();
 }
@@ -25,6 +27,7 @@ export function replaceAll(before, after) {
   state.redoStack = [];
   updateHistoryButtons();
   scheduleAutosave();
+  renderLayerPanel();
   requestRender();
   drawPreview3d();
 }
@@ -36,6 +39,7 @@ export function clearDrawing() {
   state.redoStack = [];
   updateHistoryButtons();
   scheduleAutosave();
+  renderLayerPanel();
   requestRender();
   drawPreview3d();
 }
@@ -46,9 +50,11 @@ export function undo() {
   if (action.type === "add") state.objects = state.objects.filter(o => o.id !== action.object.id);
   if (action.type === "clear") state.objects = cloneObjects(action.before);
   if (action.type === "replaceAll") state.objects = cloneObjects(action.before);
+  if (action.type === "layerSnapshot") restoreLayerSnapshot(action.before);
   state.redoStack.push(action);
   updateHistoryButtons();
   scheduleAutosave();
+  renderLayerPanel();
   requestRender();
   drawPreview3d();
 }
@@ -59,9 +65,11 @@ export function redo() {
   if (action.type === "add") state.objects.push(cloneObject(action.object));
   if (action.type === "clear") state.objects = [];
   if (action.type === "replaceAll") state.objects = cloneObjects(action.after);
+  if (action.type === "layerSnapshot") restoreLayerSnapshot(action.after);
   state.undoStack.push(action);
   updateHistoryButtons();
   scheduleAutosave();
+  renderLayerPanel();
   requestRender();
   drawPreview3d();
 }

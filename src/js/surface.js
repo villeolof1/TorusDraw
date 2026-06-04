@@ -3,9 +3,11 @@ import { DEFAULT_SURFACE, state } from "./state.js";
 import { clamp, cloneSurface, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
 import { analyzeSurfaceQuality, qualityMessage } from "./surfaceQuality.js";
 import { requestRender, redraw } from "./render2d.js";
+import { drawPreview3d } from "./preview3d.js";
 import { openPanel, showStatus } from "./dom.js";
 import { scheduleAutosave, setBackgroundFromDataUrl } from "./storage.js";
 import { updateHistoryButtons } from "./history.js";
+import { imageLayer, renderLayerPanel, syncLegacyStateFromImageLayer, ensureLayerModel } from "./layers.js";
 
 const MIN_ZOOM = 0.16;
 const MAX_ZOOM = 7.5;
@@ -155,10 +157,12 @@ export function sliderToZoom(value) {
 }
 
 export function syncImageUi() {
+  ensureLayerModel();
+  syncLegacyStateFromImageLayer();
   state.ui.imageCropButton.classList.toggle("active", state.imageFitMode === "crop");
   state.ui.imageStretchButton.classList.toggle("active", state.imageFitMode === "stretch");
-  state.ui.imageOpacityInput.value = String(Math.round(state.imageOpacity * 100));
-  state.ui.opacityValue.textContent = `${Math.round(state.imageOpacity * 100)}%`;
+  if (state.ui.imageOpacityInput) state.ui.imageOpacityInput.value = String(Math.round(state.imageOpacity * 100));
+  if (state.ui.opacityValue) state.ui.opacityValue.textContent = `${Math.round(state.imageOpacity * 100)}%`;
   if (state.ui.imageSummary) {
     state.ui.imageSummary.textContent = state.background.image
       ? `${state.background.naturalWidth}×${state.background.naturalHeight} · ${state.imageFitMode} · ${Math.round(state.imageOpacity * 100)}%`
@@ -171,15 +175,40 @@ export function syncImageUi() {
 export function setImageFitMode(mode) {
   state.imageFitMode = mode === "stretch" ? "stretch" : "crop";
   syncImageUi();
+  renderLayerPanel();
   scheduleAutosave();
   requestRender();
 }
 
 export function setImageOpacity(value) {
-  state.imageOpacity = clamp(Number(value) / 100, 0.15, 1);
-  syncImageUi();
+  const nextOpacity = clamp(Number(value) / 100, 0.15, 1);
+  state.imageOpacity = nextOpacity;
+
+  const layer = imageLayer();
+  if (layer) {
+    layer.opacity = nextOpacity;
+    layer.visible = state.background.image ? layer.visible !== false : layer.visible;
+  }
+
+  const percent = Math.round(nextOpacity * 100);
+  if (state.ui.imageOpacityInput && Number(state.ui.imageOpacityInput.value) !== percent) {
+    state.ui.imageOpacityInput.value = String(percent);
+  }
+  if (state.ui.opacityValue) state.ui.opacityValue.textContent = `${percent}%`;
+  if (state.ui.imageSummary) {
+    state.ui.imageSummary.textContent = state.background.image
+      ? `${state.background.naturalWidth}×${state.background.naturalHeight} · ${state.imageFitMode} · ${percent}%`
+      : "No image added";
+  }
+  if (state.ui.imageLayerStatus) {
+    state.ui.imageLayerStatus.textContent = state.background.image
+      ? `Image · fixed behind drawings · ${percent}%`
+      : "No image · fixed behind drawings";
+  }
+
   scheduleAutosave();
   requestRender();
+  drawPreview3d();
 }
 
 function surfaceForImage() {
@@ -203,7 +232,10 @@ export function loadImageFile(file) {
   reader.onload = async () => {
     await setBackgroundFromDataUrl(reader.result);
     state.imageOpacity = 0.9;
+    const layer = imageLayer();
+    if (layer) { layer.visible = true; layer.opacity = state.imageOpacity; }
     syncImageUi();
+    renderLayerPanel();
     state.ui.imagePanel.classList.add("open");
     requestRender();
     scheduleAutosave();
@@ -216,7 +248,10 @@ export function loadImageFile(file) {
 export function removeImage() {
   state.background = { image: null, dataUrl: null, naturalWidth: 1, naturalHeight: 1 };
   state.ui.backgroundInput.value = "";
+  const layer = imageLayer();
+  if (layer) layer.visible = false;
   syncImageUi();
+  renderLayerPanel();
   scheduleAutosave();
   showStatus("Image removed.");
   requestRender();
@@ -289,6 +324,38 @@ function applyTopologyLinks(links, message) {
   showPreviewNoticeIfOpenPreviewBecameReversed();
   showStatus(message);
   requestRender();
+}
+
+
+export function applySurfacePreset(name) {
+  const side = 520;
+  const goldenHeight = 420;
+  const presets = {
+    default: {
+      v1: { x: 600, y: 0 },
+      v2: { x: 0, y: -420 }
+    },
+    square: {
+      v1: { x: side, y: 0 },
+      v2: { x: 0, y: -side }
+    },
+    rhombus: {
+      v1: { x: side, y: 0 },
+      v2: { x: Math.round(side / 2), y: -Math.round(side * Math.sqrt(3) / 2) }
+    },
+    golden: {
+      v1: { x: Math.round(goldenHeight * 1.61803398875), y: 0 },
+      v2: { x: 0, y: -goldenHeight }
+    }
+  };
+  const preset = presets[name];
+  if (!preset) return false;
+  return applySurface({
+    ...state.surface,
+    v1: { ...preset.v1 },
+    v2: { ...preset.v2 },
+    edgeLinks: normalizeEdgeLinks(state.surface.edgeLinks, state.surface)
+  }, `${name === "rhombus" ? "60° rhombus" : name.charAt(0).toUpperCase() + name.slice(1)} preset applied.`);
 }
 
 export function exportPNG() {
