@@ -278,3 +278,11 @@ Tool shortcuts now follow the visible order:
 ## Latest dot seam fix
 
 This version moves the main bottom toolbar slightly left and improves 3D dot rendering. Dot outlines are now rendered as surface-following rings, lifted above the surface to avoid z-fighting, and duplicated across linked seams before splitting so dots that cross cell borders are less likely to appear cut off or buried.
+
+## Latest rub eraser fix
+
+Rub eraser now samples line objects into dense paths before cutting, so it can remove a middle section of a straight line instead of failing or behaving like object erase. Dot objects are converted to an outline path when rubbed, so touching a dot removes only the touched part of its circular outline.
+
+## Latest dot rub eraser fix
+
+Dot rub erasing now treats dots as circular outline paths rather than filled disks. Each sampled outline point gets its own surface coordinates, preventing the strange collapsed/warped behavior from the previous version. Object erasing still removes a whole dot when desired.

@@ -100,10 +100,23 @@ function distanceToSegment(p, a, b) {
   return length(sub(p, { x: a.x + ab.x * t, y: a.y + ab.y * t }));
 }
 function hitObject(object, localPoint, radius) {
-  const threshold = radius + (object.size || 1) / 2;
   if (object.type === "dot") {
-    return object.points.some(point => length(sub(localPoint, point)) <= threshold);
+    const center = object.points[0];
+    const dotRadius = Math.max(0.5, (object.size || 20) / 2);
+
+    // Object erase should be easy: touching the disk removes the dot object.
+    // Rub erase should be precise: touching the outline cuts only that part
+    // of the circular outline.
+    if (state.eraserMode !== "rub") {
+      return length(sub(localPoint, center)) <= radius + dotRadius;
+    }
+
+    const outlineSize = Math.max(1, (object.size || 20) * 0.13);
+    const distanceFromOutline = Math.abs(length(sub(localPoint, center)) - dotRadius);
+    return distanceFromOutline <= radius + outlineSize * 0.75;
   }
+
+  const threshold = radius + (object.size || 1) / 2;
   for (let i = 1; i < object.points.length; i++) if (distanceToSegment(localPoint, object.points[i - 1], object.points[i]) <= threshold) return true;
   return false;
 }
@@ -134,19 +147,95 @@ function updateHomHover(worldPoint) {
   requestRender();
 }
 
-function splitByRubEraser(object, point, radius) {
-  const threshold = radius + (object.size || 1) * 0.6;
+function sampleObjectPath(object) {
+  if (!object.points?.length) return [];
+
   if (object.type === "dot") {
-    const points = object.points.filter(p => length(sub(p, point)) > threshold).map(p => ({ ...p }));
-    return points.length ? [{ ...object, points }] : [];
+    const center = object.points[0];
+    const dotRadius = Math.max(0.5, (object.size || 20) / 2);
+    const samples = [];
+    const count = 128;
+
+    for (let i = 0; i <= count; i++) {
+      const angle = (Math.PI * 2 * i) / count;
+      const sample = {
+        x: center.x + Math.cos(angle) * dotRadius,
+        y: center.y + Math.sin(angle) * dotRadius,
+        pressure: 0.5
+      };
+      const uv = worldToBasis(sample, state.surface);
+      if (uv) {
+        sample.u = uv.u;
+        sample.v = uv.v;
+      }
+      samples.push(sample);
+    }
+    return samples;
   }
-  const chunks = []; let chunk = [], changed = false;
-  for (const p of object.points) {
-    if (length(sub(p, point)) <= threshold) { changed = true; if (chunk.length >= 2) chunks.push(chunk); chunk = []; }
-    else chunk.push({ ...p });
+
+  if (object.points.length < 2) return object.points.map(p => ({ ...p }));
+
+  const samples = [{ ...object.points[0] }];
+  const maxStep = Math.max(2, (object.size || 1) * 0.35);
+  for (let i = 1; i < object.points.length; i++) {
+    const a = object.points[i - 1];
+    const b = object.points[i];
+    const d = Math.max(0.0001, length(sub(b, a)));
+    const steps = Math.max(1, Math.ceil(d / maxStep));
+    for (let step = 1; step <= steps; step++) {
+      const t = step / steps;
+      samples.push({
+        x: a.x + (b.x - a.x) * t,
+        y: a.y + (b.y - a.y) * t,
+        u: Number.isFinite(a.u) && Number.isFinite(b.u) ? a.u + (b.u - a.u) * t : undefined,
+        v: Number.isFinite(a.v) && Number.isFinite(b.v) ? a.v + (b.v - a.v) * t : undefined,
+        pressure: 0.5
+      });
+    }
+  }
+  return samples;
+}
+
+function splitByRubEraser(object, point, radius) {
+  const outlineSize = object.type === "dot" ? Math.max(1, (object.size || 20) * 0.13) : (object.size || 1);
+  const threshold = radius + outlineSize * 0.75;
+  const samples = sampleObjectPath(object);
+  const chunks = [];
+  let chunk = [];
+  let changed = false;
+
+  for (const sample of samples) {
+    if (length(sub(sample, point)) <= threshold) {
+      changed = true;
+      if (chunk.length >= 2) chunks.push(chunk);
+      chunk = [];
+    } else {
+      chunk.push({ ...sample });
+    }
   }
   if (chunk.length >= 2) chunks.push(chunk);
-  return changed ? chunks.map(points => ({ ...object, id: state.nextObjectId++, type: "pen", points })) : [object];
+  if (!changed) return [object];
+
+  // A dot is a closed outline. If the erased part is not at the start/end of
+  // the sampled ring, the surviving outline can wrap across the sample seam.
+  // Merge the last and first chunks so it remains one continuous arc.
+  if (object.type === "dot" && chunks.length > 1) {
+    const firstSampleRemoved = length(sub(samples[0], point)) <= threshold;
+    const lastSampleRemoved = length(sub(samples[samples.length - 1], point)) <= threshold;
+    if (!firstSampleRemoved && !lastSampleRemoved) {
+      const first = chunks.shift();
+      const last = chunks.pop();
+      chunks.unshift([...last, ...first]);
+    }
+  }
+
+  return chunks.map(points => ({
+    ...object,
+    id: state.nextObjectId++,
+    type: "pen",
+    size: outlineSize,
+    points
+  }));
 }
 
 function applyEraser(worldPoint) {
