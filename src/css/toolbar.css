@@ -1,4 +1,10 @@
 /* Floating control groups. The old single giant toolbar is split into small, calm islands. */
+
+:root {
+  --left-dock-reserve: 126px;
+  --right-dock-reserve: 236px;
+}
+
 #toolbar,
 #topActions,
 #fileActions,
@@ -41,20 +47,24 @@
 }
 
 #toolbar {
-  left: 50%;
+  left: var(--left-dock-reserve);
+  right: var(--right-dock-reserve);
   bottom: 22px;
-  transform: translateX(calc(-50% - 22px));
+  transform: none;
   display: flex;
   align-items: center;
   gap: 8px;
-  max-width: calc(100vw - 32px);
+  max-width: none;
+  min-width: 0;
   padding: 8px;
-  border-radius: 999px;
+  border-radius: 24px;
   white-space: nowrap;
+  justify-content: flex-start;
 }
 
 #navigationTools {
-  left: calc(50% + 270px);
+  right: 76px;
+  left: auto;
   bottom: 22px;
   display: flex;
   align-items: center;
@@ -62,6 +72,9 @@
   padding: 8px;
   border-radius: 999px;
   white-space: nowrap;
+  max-width: calc(var(--right-dock-reserve) - 86px);
+  overflow-x: auto;
+  overflow-y: hidden;
 }
 
 #sideLauncher {
@@ -164,3 +177,242 @@
 }
 
 #drawingCanvas.temporary-dot { cursor: copy; }
+
+
+#navigationTools,
+#sideLauncher,
+#topActions,
+#fileActions {
+  min-width: 0;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#navigationTools::-webkit-scrollbar,
+#sideLauncher::-webkit-scrollbar,
+#topActions::-webkit-scrollbar,
+#fileActions::-webkit-scrollbar {
+  display: none;
+}
+
+@media (max-width: 560px) {
+  #sideLauncher,
+  #navigationTools,
+  #topActions,
+  #fileActions,
+  #toolbar {
+    overflow-x: auto;
+    overflow-y: hidden;
+    overscroll-behavior-x: contain;
+    touch-action: pan-x;
+  }
+}
+
+
+/* --- Responsive control layout -------------------------------------------------
+   The controls are deliberately placed in reserved lanes. The main toolbar can
+   scroll horizontally inside its own lane, but it never grows over the Layers /
+   Surface buttons or the bottom-right buttons. */
+#toolbar,
+#topActions,
+#fileActions {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+#toolbar::-webkit-scrollbar,
+#topActions::-webkit-scrollbar,
+#fileActions::-webkit-scrollbar { display: none; }
+#toolbar > *,
+#toolbar .tool-group,
+#toolbar button,
+#toolbar label,
+#navigationTools button,
+#sideLauncher button,
+#fileActions button,
+#fileActions .upload-button,
+#topActions button {
+  flex: 0 0 auto;
+}
+#toolbar {
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-width: 0;
+  touch-action: pan-x;
+  overscroll-behavior-x: contain;
+}
+#navigationTools,
+#sideLauncher,
+.floating-help-button,
+.floating-shape-button {
+  flex-shrink: 0;
+}
+
+@media (max-width: 1160px) and (min-width: 761px) {
+  #toolbar {
+    left: 116px;
+    right: 214px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    transform: none;
+    max-width: none;
+    justify-content: flex-start;
+    border-radius: 24px;
+  }
+  #navigationTools {
+    right: 104px;
+    left: auto;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+    max-width: calc(214px - 92px);
+  }
+  #sideLauncher {
+    left: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .floating-shape-button {
+    right: 12px;
+    bottom: calc(12px + env(safe-area-inset-bottom));
+  }
+  .floating-help-button {
+    right: 12px;
+    bottom: calc(58px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 760px) {
+  #toolbar {
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(74px + env(safe-area-inset-bottom));
+    transform: none;
+    max-width: none;
+    padding: 7px;
+    gap: 6px;
+    border-radius: 22px;
+    justify-content: flex-start;
+  }
+  #toolbar .divider { height: 22px; margin: 0; }
+  #toolbar .control-label > span { display: none; }
+  #toolbar .small-input input { width: 58px; padding-left: 8px; padding-right: 8px; }
+  #toolbar input[type="color"] { width: 36px; height: 36px; }
+  .tool-button { padding-left: 11px; padding-right: 11px; }
+  .mini-toggle { padding-left: 9px; padding-right: 9px; }
+
+  #sideLauncher {
+    left: calc(8px + env(safe-area-inset-left));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    flex-direction: row;
+    gap: 5px;
+    padding: 6px;
+    border-radius: 999px;
+  }
+  #sideLauncher button { min-width: 67px; padding-left: 10px; padding-right: 10px; }
+
+  #navigationTools {
+    right: calc(100px + env(safe-area-inset-right));
+    left: auto;
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    padding: 6px;
+    gap: 4px;
+    border-radius: 999px;
+    max-width: calc(100vw - 180px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  }
+  .floating-shape-button {
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: 40px;
+    height: 40px;
+  }
+  .floating-help-button {
+    right: calc(52px + env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    width: 40px;
+    height: 40px;
+  }
+
+  #topActions {
+    left: calc(8px + env(safe-area-inset-left));
+    right: auto;
+    top: calc(8px + env(safe-area-inset-top));
+    max-width: calc(50vw - 12px);
+    transform: none;
+    overflow-x: auto;
+    justify-content: flex-start;
+    border-radius: 22px;
+    padding: 7px;
+  }
+  #fileActions {
+    right: calc(8px + env(safe-area-inset-right));
+    top: calc(8px + env(safe-area-inset-top));
+    max-width: calc(50vw - 12px);
+    overflow-x: auto;
+    border-radius: 22px;
+    padding: 7px;
+  }
+  #zoomRail {
+    right: calc(8px + env(safe-area-inset-right));
+    top: 50%;
+    padding: 7px 6px;
+    gap: 6px;
+  }
+  #zoomRail button { width: 32px; height: 32px; }
+  #zoomSlider { height: 142px; }
+  #status {
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    top: calc(60px + env(safe-area-inset-top));
+    transform: none;
+    max-width: none;
+    border-radius: 18px;
+  }
+}
+
+@media (max-width: 380px) {
+  #toolbar { bottom: calc(116px + env(safe-area-inset-bottom)); }
+  #sideLauncher {
+    bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+  #navigationTools {
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(60px + env(safe-area-inset-bottom));
+  }
+  .floating-help-button {
+    right: calc(52px + env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  .floating-shape-button {
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+  }
+  #sideLauncher button { min-width: 62px; }
+  .tool-button { padding-left: 10px; padding-right: 10px; }
+}
+
+/* Final toolbar sizing: the drawing toolbar now shrink-wraps its contents.
+   When space is tight it caps at the available lane and scrolls sideways,
+   instead of stretching into an ugly empty glass bar. */
+#toolbar {
+  width: max-content;
+  max-width: calc(100vw - var(--left-dock-reserve) - var(--right-dock-reserve));
+  left: calc(var(--left-dock-reserve) + ((100vw - var(--left-dock-reserve) - var(--right-dock-reserve)) / 2));
+  right: auto;
+  transform: translateX(-50%);
+  justify-content: flex-start;
+}
+
+@media (max-width: 1160px) and (min-width: 761px) {
+  #toolbar {
+    width: max-content;
+    max-width: calc(100vw - 116px - 214px);
+    left: calc(116px + ((100vw - 116px - 214px) / 2));
+    right: auto;
+    transform: translateX(-50%);
+  }
+}
+
+@media (max-width: 760px) {
+  #toolbar {
+    width: max-content;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+  }
+}

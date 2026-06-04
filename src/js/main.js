@@ -110,6 +110,8 @@ function wireToolbar() {
   if (state.ui.previewTwistInput) state.ui.previewTwistInput.oninput = e => { state.preview.twist = Number(e.target.value) || 0; drawPreview3d(); };
   if (state.ui.previewTwistResetButton) state.ui.previewTwistResetButton.onclick = () => { state.preview.twist = 0; state.ui.previewTwistInput.value = "0"; drawPreview3d(); };
   state.ui.helpButton.onclick = () => openPanel("help");
+  if (state.ui.helpCloseButton) state.ui.helpCloseButton.onclick = () => state.ui.helpPanel.classList.remove("open");
+  if (state.ui.surfaceCloseButton) state.ui.surfaceCloseButton.onclick = () => state.ui.surfacePanel.classList.remove("open");
   state.ui.imageCloseButton.onclick = () => state.ui.imagePanel.classList.remove("open");
   if (state.ui.imageLayerVisibilityButton) state.ui.imageLayerVisibilityButton.onclick = () => toggleLayerVisibility("image-background");
   state.ui.addLayerButton.onclick = () => addDrawingLayer();

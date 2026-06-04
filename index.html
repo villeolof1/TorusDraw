@@ -70,7 +70,13 @@
     </section>
 
     <section id="surfacePanel" class="panel" aria-label="Surface controls">
-      <div class="panel-title">Surface</div>
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-title">Surface</div>
+          <div class="panel-subtitle">Cell dimensions and edge gluing</div>
+        </div>
+        <button id="surfaceCloseButton" class="mini-close" aria-label="Close surface panel">×</button>
+      </div>
       <p class="panel-copy">
         Copies use v1 = (a1, b1) and v2 = (a2, b2). Positive a goes right; positive b goes up. Typed changes apply only when you click Update surface.
       </p>
@@ -171,7 +177,7 @@
         <canvas id="preview3dCanvas" width="420" height="300" aria-label="Interactive 3D preview"></canvas>
         <label class="preview-twist-rail" title="Twist/roll the 3D model around its natural closed direction">
           <span>Twist</span>
-          <input id="previewTwistInput" type="range" min="-180" max="180" value="0" orient="vertical" />
+          <input id="previewTwistInput" type="range" min="0" max="540" value="0" orient="vertical" />
           <button id="previewTwistResetButton" class="mini-toggle" type="button" title="Reset twist">0</button>
         </label>
       </div>
@@ -185,7 +191,13 @@
 
 
     <section id="helpPanel" class="panel help-panel" aria-label="Keyboard shortcuts">
-      <div class="panel-title">Shortcuts</div>
+      <div class="panel-title-row">
+        <div>
+          <div class="panel-title">Shortcuts</div>
+          <div class="panel-subtitle">Tools and view controls</div>
+        </div>
+        <button id="helpCloseButton" class="mini-close" aria-label="Close shortcuts panel">×</button>
+      </div>
       <div class="shortcut-grid">
         <div><kbd>1</kbd> / <kbd>P</kbd></div><div>Pen</div>
         <div><kbd>2</kbd> / <kbd>L</kbd></div><div>Line</div>

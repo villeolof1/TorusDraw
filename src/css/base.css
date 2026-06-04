@@ -54,3 +54,18 @@ input[type="number"] {
 input[type="number"]:focus { background: white; border-color: rgba(0,0,0,.25); box-shadow: 0 0 0 4px rgba(0,0,0,.06); }
 input[type="color"] { width: 34px; height: 34px; padding: 0; border: 0; background: transparent; cursor: pointer; }
 #drawingCanvas.homing { cursor: help; }
+
+/* Responsive safety: every floating control uses dynamic viewport units and safe-area insets. */
+@supports (height: 100dvh) {
+  html, body, #app, #drawingCanvas { height: 100dvh; }
+}
+button, .upload-button, input[type="range"], input[type="checkbox"], input[type="color"] {
+  -webkit-tap-highlight-color: transparent;
+}
+button, .upload-button {
+  min-height: 38px;
+}
+@media (pointer: coarse) {
+  button, .upload-button { min-height: 42px; }
+  input[type="number"] { min-height: 40px; }
+}
