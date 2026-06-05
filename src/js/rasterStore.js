@@ -4,8 +4,9 @@
 const canvases = new Map();
 const images = new Map();
 
-export function setRasterCanvas(id, canvas) {
+export function setRasterCanvas(id, canvas, sourceDataUrl = null) {
   if (id == null || !canvas) return;
+  if (sourceDataUrl) canvas.__sourceDataUrl = sourceDataUrl;
   canvases.set(id, canvas);
   images.delete(id);
 }

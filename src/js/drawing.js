@@ -156,7 +156,7 @@ function convertFilledShapeToRaster(object) {
     imageDataUrl,
     points: [origin, xCorner, yCorner]
   };
-  setRasterCanvas(raster.id, canvas);
+  setRasterCanvas(raster.id, canvas, imageDataUrl);
   return raster;
 }
 function eraseRasterObject(object, point, radius, previousPoint = null) {
@@ -191,7 +191,7 @@ function eraseRasterObject(object, point, radius, previousPoint = null) {
   canvas.__sourceDataUrl = object.imageDataUrl;
   object.rasterWidth = canvas.width;
   object.rasterHeight = canvas.height;
-  setRasterCanvas(object.id, canvas);
+  setRasterCanvas(object.id, canvas, object.imageDataUrl);
   return object;
 }
 
@@ -301,7 +301,7 @@ function cropRasterComponent(parent, component, nextId) {
     points
   };
   outCanvas.__sourceDataUrl = object.imageDataUrl;
-  setRasterCanvas(object.id, outCanvas);
+  setRasterCanvas(object.id, outCanvas, object.imageDataUrl);
   return object;
 }
 
@@ -1405,10 +1405,76 @@ export function duplicateSelection() {
   replaceAll(before, state.objects);
   syncSelectionActions();
 }
+
+function parseCssHexColor(color) {
+  if (typeof color !== "string") return null;
+  const value = color.trim();
+  const short = /^#([0-9a-f]{3})$/i.exec(value);
+  if (short) {
+    const [r, g, b] = short[1].split("").map(ch => parseInt(ch + ch, 16));
+    return { r, g, b };
+  }
+  const full = /^#([0-9a-f]{6})$/i.exec(value);
+  if (full) {
+    const n = parseInt(full[1], 16);
+    return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+  }
+  return null;
+}
+
+function recolorRasterObject(object, color) {
+  if (!object || object.type !== "raster") return false;
+  const rgb = parseCssHexColor(color);
+  if (!rgb) { object.color = color; object.fillColor = color; return false; }
+  const canvas = getRasterCanvas(object, () => {
+    const live = state.objects.find(item => item.id === object.id);
+    if (!live?.pendingRasterColor) return;
+    if (recolorRasterObject(live, live.pendingRasterColor)) {
+      delete live.pendingRasterColor;
+      requestRender();
+    }
+  });
+  if (!canvas) {
+    object.color = color;
+    object.fillColor = color;
+    object.pendingRasterColor = color;
+    return false;
+  }
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  const data = image.data;
+  let changed = false;
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i + 3] <= 0) continue;
+    data[i] = rgb.r;
+    data[i + 1] = rgb.g;
+    data[i + 2] = rgb.b;
+    changed = true;
+  }
+  if (!changed) return false;
+  ctx.putImageData(image, 0, 0);
+  object.color = color;
+  object.fillColor = color;
+  object.imageDataUrl = canvas.toDataURL("image/png");
+  canvas.__sourceDataUrl = object.imageDataUrl;
+  object.rasterWidth = canvas.width;
+  object.rasterHeight = canvas.height;
+  setRasterCanvas(object.id, canvas, object.imageDataUrl);
+  delete object.pendingRasterColor;
+  return true;
+}
+
 export function applySelectedColor(color) {
   const objects = selectedObjects();
   if (!objects.length) return false;
-  for (const object of objects) object.color = color;
+  for (const object of objects) {
+    if (object.type === "raster") {
+      recolorRasterObject(object, color);
+      continue;
+    }
+    object.color = color;
+    if ((object.shapeMode || "outline") === "fill") object.fillColor = color;
+  }
   requestRender();
   return true;
 }
