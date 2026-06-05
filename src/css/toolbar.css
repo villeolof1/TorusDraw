@@ -416,3 +416,434 @@
     transform: translateX(-50%);
   }
 }
+
+/* Batch upgrade: independent scrollable lanes and compact controls. */
+#toolbar {
+  width: max-content;
+  max-width: calc(100vw - var(--left-dock-reserve, 126px) - var(--right-dock-reserve, 236px));
+  justify-self: center;
+}
+#navigationTools,
+#sideLauncher,
+#topActions,
+#fileActions {
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+#navigationTools::-webkit-scrollbar,
+#sideLauncher::-webkit-scrollbar,
+#topActions::-webkit-scrollbar,
+#fileActions::-webkit-scrollbar { display: none; }
+
+.selection-actions {
+  position: absolute;
+  left: 50%;
+  bottom: calc(78px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 11;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 24px;
+  background: var(--glass);
+  border: 1px solid rgba(0,0,0,.08);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px);
+  max-width: calc(100vw - 24px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+.selection-actions[hidden] { display: none; }
+.mini-toggle.danger { color: #8c2b21; }
+.shape-mode-controls {
+  margin-left: -2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.045);
+  align-self: stretch;
+  display: inline-flex;
+  gap: 3px;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px) scale(.96);
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-width 190ms ease, opacity 150ms ease, transform 190ms ease, margin 190ms ease, padding 190ms ease;
+  flex: 0 0 auto;
+}
+.shape-mode-controls.visible {
+  max-width: 170px;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  pointer-events: auto;
+}
+
+
+.select-mode-controls {
+  margin-left: -2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.045);
+  align-self: stretch;
+  display: inline-flex;
+  gap: 3px;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px) scale(.96);
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-width 190ms ease, opacity 150ms ease, transform 190ms ease, margin 190ms ease, padding 190ms ease;
+  flex: 0 0 auto;
+}
+.select-mode-controls.visible {
+  max-width: 190px;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  pointer-events: auto;
+}
+
+.mobile-modifier-bar {
+  display: none;
+  position: absolute;
+  left: 50%;
+  bottom: calc(124px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 11;
+  gap: 6px;
+  padding: 6px;
+  border-radius: 999px;
+  background: var(--glass);
+  border: 1px solid rgba(0,0,0,.08);
+  box-shadow: var(--shadow);
+}
+.touch-ui .mobile-modifier-bar.visible { display: flex; }
+
+
+@media (max-width: 760px) {  #navigationTools {
+    right: calc(140px + env(safe-area-inset-right));
+    max-width: calc(100vw - 220px - env(safe-area-inset-left) - env(safe-area-inset-right));
+  }
+  #toolbar {
+    width: auto;
+    max-width: none;
+  }
+  .selection-actions {
+    bottom: calc(122px + env(safe-area-inset-bottom));
+  }
+  
+.select-mode-controls {
+  margin-left: -2px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(0,0,0,.045);
+  align-self: stretch;
+  display: inline-flex;
+  gap: 3px;
+  max-width: 0;
+  opacity: 0;
+  transform: translateX(-6px) scale(.96);
+  overflow: hidden;
+  pointer-events: none;
+  transition: max-width 190ms ease, opacity 150ms ease, transform 190ms ease, margin 190ms ease, padding 190ms ease;
+  flex: 0 0 auto;
+}
+.select-mode-controls.visible {
+  max-width: 190px;
+  opacity: 1;
+  transform: translateX(0) scale(1);
+  pointer-events: auto;
+}
+
+.mobile-modifier-bar {
+    left: calc(8px + env(safe-area-inset-left));
+    right: calc(8px + env(safe-area-inset-right));
+    bottom: calc(126px + env(safe-area-inset-bottom));
+    transform: none;
+    overflow-x: auto;
+    justify-content: flex-start;
+  }
+  .shape-mode-controls { max-width: 210px; overflow-x: auto; }
+
+}
+
+.selection-actions::-webkit-scrollbar { display: none; }
+.selection-number-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
+  flex: 0 0 auto;
+}
+.selection-number-label input {
+  width: 64px;
+  height: 30px;
+  padding: 4px 8px;
+}
+
+
+/* ---------------------------------------------------------------------------
+   Final responsive toolbar reachability pass.
+   Keep every floating island independent, shrink-wrap the main drawing toolbar
+   when possible, and make every tight layout horizontally scrollable. These
+   rules intentionally sit last so they override the older iterative patches
+   above without disturbing the JavaScript or markup.
+--------------------------------------------------------------------------- */
+#toolbar,
+#selectionActions,
+#mobileModifierBar,
+#sideLauncher,
+#navigationTools,
+#topActions,
+#fileActions {
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+#toolbar::-webkit-scrollbar,
+#selectionActions::-webkit-scrollbar,
+#mobileModifierBar::-webkit-scrollbar,
+#sideLauncher::-webkit-scrollbar,
+#navigationTools::-webkit-scrollbar,
+#topActions::-webkit-scrollbar,
+#fileActions::-webkit-scrollbar {
+  display: none;
+}
+
+#toolbar > *,
+#toolbar .tool-group,
+#toolbar button,
+#toolbar label,
+#selectionActions > *,
+#mobileModifierBar > *,
+#sideLauncher > *,
+#navigationTools > *,
+#topActions > *,
+#fileActions > * {
+  flex: 0 0 auto;
+}
+
+/* Desktop / wide tablet: center the drawing tools in the safe lane between
+   left and right control islands. The bar is only as wide as its contents until
+   it truly needs to scroll. */
+#toolbar {
+  width: max-content !important;
+  max-width: max(220px, calc(100vw - var(--left-dock-reserve, 126px) - var(--right-dock-reserve, 236px) - 24px)) !important;
+  left: calc(var(--left-dock-reserve, 126px) + ((100vw - var(--left-dock-reserve, 126px) - var(--right-dock-reserve, 236px)) / 2)) !important;
+  right: auto !important;
+  transform: translateX(-50%) !important;
+  justify-content: flex-start !important;
+  white-space: nowrap;
+}
+
+/* Middle widths: keep the same three-lane layout, but reserve explicit room for
+   the Layers/Surface island and the right-side navigation/3D/help controls. */
+@media (max-width: 1160px) and (min-width: 761px) {
+  #toolbar {
+    width: max-content !important;
+    max-width: max(220px, calc(100vw - 116px - 214px - 24px)) !important;
+    left: calc(116px + ((100vw - 116px - 214px) / 2)) !important;
+    right: auto !important;
+    bottom: calc(12px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+  }
+  #navigationTools {
+    max-width: 122px !important;
+  }
+}
+
+/* Compact screens: the main drawing toolbar becomes its own upper row. It
+   shrink-wraps if the tools fit and caps at the viewport if they don't; in the
+   latter case it scrolls sideways. No full-width empty glass bar. */
+@media (max-width: 760px) {
+  #toolbar {
+    width: max-content !important;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(74px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    justify-content: flex-start !important;
+  }
+
+  #sideLauncher {
+    max-width: calc(52vw - 16px - env(safe-area-inset-left)) !important;
+  }
+
+  #navigationTools {
+    max-width: calc(48vw - 96px - env(safe-area-inset-right)) !important;
+  }
+
+  #topActions,
+  #fileActions {
+    max-width: calc(50vw - 14px) !important;
+  }
+
+  .selection-actions {
+    width: max-content;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+  }
+
+  .mobile-modifier-bar.visible,
+  .touch-ui .mobile-modifier-bar.visible {
+    display: flex;
+    width: max-content;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right));
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
+    justify-content: flex-start;
+  }
+}
+
+/* Very narrow phones: move the drawing toolbar above the lower utility row, but
+   keep it scrollable and content-sized. The bottom utility islands also scroll
+   in their own lanes rather than covering one another. */
+@media (max-width: 380px) {
+  #toolbar {
+    width: max-content !important;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(116px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+  }
+
+  #sideLauncher {
+    max-width: calc(50vw - 14px - env(safe-area-inset-left)) !important;
+    left: calc(8px + env(safe-area-inset-left)) !important;
+    right: auto !important;
+    bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+  }
+
+  #navigationTools {
+    max-width: calc(50vw - 58px - env(safe-area-inset-right)) !important;
+    right: calc(8px + env(safe-area-inset-right)) !important;
+    left: auto !important;
+    bottom: calc(60px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Ultra-tight fallback: if the right navigation island has too little room, keep
+   it usable by letting it sit above the shape/help buttons and scroll. */
+@media (max-width: 330px) {
+  #navigationTools {
+    bottom: calc(106px + env(safe-area-inset-bottom)) !important;
+    max-width: calc(100vw - 120px - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+  }
+  #toolbar {
+    bottom: calc(150px + env(safe-area-inset-bottom)) !important;
+  }
+  .selection-actions {
+    bottom: calc(196px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Desktop browsers should still allow wheel/trackpad horizontal scrolling over
+   any floating island when a tool row is clipped. */
+#toolbar,
+#selectionActions,
+#mobileModifierBar {
+  scroll-snap-type: none;
+}
+
+
+
+/* ---------------------------------------------------------------------------
+   Final no-overlap / phone-only touch modifier pass.
+   The modifier row is only for real compact touch devices. It never appears on
+   desktop browser windows, and when it does appear it reserves its own row
+   between the toolbar and selection action strip instead of floating over them.
+--------------------------------------------------------------------------- */
+#mobileModifierBar {
+  display: none !important;
+}
+
+body.compact-ui.touch-ui #mobileModifierBar.visible {
+  display: flex !important;
+}
+
+body:not(.compact-ui) #mobileModifierBar,
+body:not(.touch-ui) #mobileModifierBar {
+  display: none !important;
+}
+
+/* Compact touch stack:
+   lower utility row -> main toolbar -> optional touch modifiers -> selection actions.
+   Each island remains content-sized and horizontally scrollable. */
+@media (max-width: 760px) {
+  body.compact-ui.touch-ui #toolbar {
+    bottom: calc(74px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui #mobileModifierBar.visible {
+    left: 50% !important;
+    right: auto !important;
+    bottom: calc(124px + env(safe-area-inset-bottom)) !important;
+    transform: translateX(-50%) !important;
+    width: max-content !important;
+    max-width: calc(100vw - 16px - env(safe-area-inset-left) - env(safe-area-inset-right)) !important;
+    overflow-x: auto !important;
+    overflow-y: hidden !important;
+    justify-content: flex-start !important;
+    white-space: nowrap !important;
+    z-index: 12 !important;
+  }
+
+  body.compact-ui.touch-ui.mobile-modifiers-visible #selectionActions:not([hidden]) {
+    bottom: calc(174px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui:not(.mobile-modifiers-visible) #selectionActions:not([hidden]) {
+    bottom: calc(124px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+/* Very narrow phones get a taller stack. Nothing shares the same vertical lane. */
+@media (max-width: 380px) {
+  body.compact-ui.touch-ui #toolbar {
+    bottom: calc(116px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui #mobileModifierBar.visible {
+    bottom: calc(166px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui.mobile-modifiers-visible #selectionActions:not([hidden]) {
+    bottom: calc(216px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui:not(.mobile-modifiers-visible) #selectionActions:not([hidden]) {
+    bottom: calc(166px + env(safe-area-inset-bottom)) !important;
+  }
+}
+
+@media (max-width: 330px) {
+  body.compact-ui.touch-ui #toolbar {
+    bottom: calc(150px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui #mobileModifierBar.visible {
+    bottom: calc(200px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui.mobile-modifiers-visible #selectionActions:not([hidden]) {
+    bottom: calc(250px + env(safe-area-inset-bottom)) !important;
+  }
+
+  body.compact-ui.touch-ui:not(.mobile-modifiers-visible) #selectionActions:not([hidden]) {
+    bottom: calc(200px + env(safe-area-inset-bottom)) !important;
+  }
+}

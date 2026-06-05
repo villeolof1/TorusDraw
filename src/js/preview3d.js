@@ -5,6 +5,7 @@ import { state } from "./state.js";
 import { clamp, length } from "./math.js";
 import { createSurfaceDomain } from "./surfaceDomain.js";
 import { createSurfaceMap } from "./surfaceMap.js";
+import { getRasterCanvas } from "./rasterStore.js";
 
 let canvas;
 let gl;
@@ -44,7 +45,7 @@ const STROKE_OBJECT_LIFT = 0.00022;
 
 export function initPreview3d() {
   canvas = state.ui.preview3dCanvas;
-  gl = canvas.getContext("webgl", { antialias: true, alpha: false }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false });
+  gl = canvas.getContext("webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true }) || canvas.getContext("experimental-webgl", { antialias: true, alpha: false, preserveDrawingBuffer: true });
   if (!gl || typeof gl.createShader !== "function") gl = null;
 
   if (gl) program = createProgram(gl, vertexShaderSource(), fragmentShaderSource());
@@ -330,7 +331,32 @@ function addLocalGridPath(out, map, fn, halfWidth, color) {
   pushRibbon(out, samples, map, halfWidth, 0.0005, color);
 }
 
+function lineHandlePoint(node, key) {
+  const handle = node?.[key];
+  return handle ? { x: node.x + handle.dx, y: node.y + handle.dy } : null;
+}
+function cubicWorldSamples(a, c1, c2, b, steps = 24) {
+  const out = [];
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps, mt = 1 - t;
+    out.push({
+      x: mt ** 3 * a.x + 3 * mt ** 2 * t * c1.x + 3 * mt * t ** 2 * c2.x + t ** 3 * b.x,
+      y: mt ** 3 * a.y + 3 * mt ** 2 * t * c1.y + 3 * mt * t ** 2 * c2.y + t ** 3 * b.y
+    });
+  }
+  return out;
+}
 function objectUvPoints(object, domain) {
+  if (object.type === "line" && object.points?.length > 1) {
+    const world = [{ ...object.points[0] }];
+    for (let i = 1; i < object.points.length; i++) {
+      const a = object.points[i - 1], b = object.points[i];
+      const c1 = lineHandlePoint(a, "outHandle"), c2 = lineHandlePoint(b, "inHandle");
+      if (c1 || c2) world.push(...cubicWorldSamples(a, c1 || a, c2 || b, b, 24).slice(1));
+      else world.push({ ...b });
+    }
+    return world.map(point => domain.worldToCell(point)).filter(Boolean);
+  }
   return (object.points || []).map(point => domain.worldToCell(point)).filter(Boolean);
 }
 
@@ -373,27 +399,35 @@ function dotRingUvPath(center, object) {
   return points;
 }
 
+function rotateWorldPoint(point, center, angle) {
+  if (!angle) return point;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const dx = point.x - center.x, dy = point.y - center.y;
+  return { x: center.x + dx * c - dy * s, y: center.y + dx * s + dy * c };
+}
+
 function shapeUvPath(object, domain) {
   if (!object.points?.length || (object.type !== "rectangle" && object.type !== "ellipse")) return [];
   const [a, b] = object.points;
   if (!a || !b) return [];
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  const angle = object.rotation || 0;
   const worldPoints = [];
 
   if (object.type === "rectangle") {
     worldPoints.push({ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 });
   } else {
-    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     const rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
     const segments = 144;
     for (let i = 0; i <= segments; i++) {
       const t = Math.PI * 2 * i / segments;
-      worldPoints.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry });
+      worldPoints.push({ x: center.x + Math.cos(t) * rx, y: center.y + Math.sin(t) * ry });
     }
   }
 
-  return worldPoints.map(point => domain.worldToCell(point)).filter(Boolean);
+  return worldPoints.map(point => domain.worldToCell(rotateWorldPoint(point, center, angle))).filter(Boolean);
 }
 
 function dotOutlineHalfWidth(object, map) {
@@ -785,6 +819,7 @@ function compositeTextureSize() {
   };
 }
 
+
 function drawBackgroundTexture(ctx, width, height, applyOpacity = true) {
   const image = state.background.image;
   if (!image) return;
@@ -811,6 +846,46 @@ function drawBackgroundTexture(ctx, width, height, applyOpacity = true) {
   ctx.restore();
 }
 
+function drawTextureEraseCuts(ctx, object, domain, width, height, pixelsPerWorld) {
+  if (!object.eraseHoles?.length) return;
+  const uCopies = domain.topology?.repeatV1 ? [-1, 0, 1] : [0];
+  const vCopies = domain.topology?.repeatV2 ? [-1, 0, 1] : [0];
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  for (const du of uCopies) {
+    for (const dv of vCopies) {
+      let previous = null;
+      for (const hole of object.eraseHoles) {
+        const rawUv = domain.worldToCell ? domain.worldToCell(hole) : { u: hole.u, v: hole.v };
+        const baseUv = domain.normalizeUV ? domain.normalizeUV(rawUv) : rawUv;
+        if (!baseUv) { previous = null; continue; }
+        const radius = Math.max(1, (hole.radius || 1) * pixelsPerWorld);
+        const point = texturePointRaw({ u: baseUv.u + du, v: baseUv.v + dv }, width, height);
+        if (previous) {
+          const bridgeWidth = Math.max(radius, previous.radius) * 2;
+          const maxBridge = Math.max(radius, previous.radius) * 5.5;
+          const dx = point.x - previous.x;
+          const dy = point.y - previous.y;
+          if (Math.hypot(dx, dy) <= maxBridge) {
+            ctx.beginPath();
+            ctx.lineWidth = bridgeWidth;
+            ctx.moveTo(previous.x, previous.y);
+            ctx.lineTo(point.x, point.y);
+            ctx.stroke();
+          }
+        }
+        ctx.beginPath();
+        ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+        ctx.fill();
+        previous = { x: point.x, y: point.y, radius };
+      }
+    }
+  }
+  ctx.restore();
+}
+
 function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
   const pixelsPerU = width;
   const pixelsPerV = height;
@@ -827,6 +902,28 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
 
+    if (object.type === "raster") {
+      const canvas = getRasterCanvas(object, drawPreview3d);
+      const pts = object.points || [];
+      const rawO = pts[0] ? domain.worldToCell(pts[0]) : null;
+      const rawX = pts[1] ? domain.worldToCell(pts[1]) : null;
+      const rawY = pts[2] ? domain.worldToCell(pts[2]) : null;
+      const uvO = rawO && (domain.normalizeUV ? domain.normalizeUV(rawO) : rawO);
+      const uvX = rawX && (domain.normalizeUV ? domain.normalizeUV(rawX) : rawX);
+      const uvY = rawY && (domain.normalizeUV ? domain.normalizeUV(rawY) : rawY);
+      if (canvas && uvO && uvX && uvY) {
+        const o = texturePointRaw(uvO, width, height);
+        const x = texturePointRaw(uvX, width, height);
+        const y = texturePointRaw(uvY, width, height);
+        ctx.save();
+        ctx.transform(x.x - o.x, x.y - o.y, y.x - o.x, y.y - o.y, o.x, o.y);
+        ctx.drawImage(canvas, 0, 0, 1, 1);
+        ctx.restore();
+      }
+      ctx.restore();
+      continue;
+    }
+
     if (object.type === "dot") {
       ctx.lineWidth = Math.max(1, (object.size || 20) * pixelsPerWorld * 0.13);
       const radius = Math.max(1, (object.size || 20) * pixelsPerWorld / 2);
@@ -840,7 +937,8 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
           for (const dv of vCopies) {
             const point = texturePointRaw({ u: uv.u + du, v: uv.v + dv }, width, height);
             ctx.beginPath();
-            ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+            ctx.arc(point.x, point.y, radius, 0, Math.PI * 2, true);
+        ctx.closePath();
             ctx.stroke();
           }
         }
@@ -851,7 +949,9 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
 
     if (object.type === "rectangle" || object.type === "ellipse") {
       const paths = domain.splitPolylineByGluing(shapeUvPath(object, domain));
+      const mode = object.shapeMode || "outline";
       ctx.lineWidth = Math.max(1, (object.size || 1) * pixelsPerWorld);
+      ctx.fillStyle = object.fillColor || object.color || "#111111";
       for (const path of paths) {
         if (path.length < 2) continue;
         ctx.beginPath();
@@ -861,7 +961,38 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
           const p = texturePoint(path[i], width, height);
           ctx.lineTo(p.x, p.y);
         }
-        ctx.stroke();
+        if (mode === "fill" || mode === "both") {
+          ctx.fill();
+          drawTextureEraseCuts(ctx, object, domain, width, height, pixelsPerWorld);
+        }
+        if (mode === "outline" || mode === "both") ctx.stroke();
+      }
+      ctx.restore();
+      continue;
+    }
+
+    if (object.type === "polygon") {
+      const uvPoints = objectUvPoints(object, domain);
+      const closed = uvPoints.length ? [...uvPoints, uvPoints[0]] : [];
+      const paths = domain.splitPolylineByGluing(closed);
+      const mode = object.shapeMode || "outline";
+      ctx.lineWidth = Math.max(1, (object.size || 1) * pixelsPerWorld);
+      ctx.fillStyle = object.fillColor || object.color || "#111111";
+      for (const path of paths) {
+        if (path.length < 2) continue;
+        ctx.beginPath();
+        const first = texturePoint(path[0], width, height);
+        ctx.moveTo(first.x, first.y);
+        for (let i = 1; i < path.length; i++) {
+          const p = texturePoint(path[i], width, height);
+          ctx.lineTo(p.x, p.y);
+        }
+        ctx.closePath();
+        if (mode === "fill" || mode === "both") {
+          ctx.fill();
+          drawTextureEraseCuts(ctx, object, domain, width, height, pixelsPerWorld);
+        }
+        if (mode === "outline" || mode === "both") ctx.stroke();
       }
       ctx.restore();
       continue;
@@ -914,7 +1045,7 @@ export function drawPreview3d() {
   const domain = createSurfaceDomain(state.surface);
   const map = createSurfaceMap(domain, { viewTwist: (state.preview.twist || 0) / 360 });
   const surface = buildSurfaceMesh(map);
-  const grid = buildGridMesh(map, domain);
+  const grid = state.preview.showGrid === false ? new Float32Array() : buildGridMesh(map, domain);
   const texturePaint = shouldBakePaintToSurface(map);
   const drawingLayers = texturePaint ? [] : (state.layers || []).filter(layer => layer.type === "drawing" && layer.visible !== false && (layer.opacity ?? 1) > 0);
   const strokeMeshes = drawingLayers.map((layer, index) => buildStrokeMesh(map, domain, layer, index * STROKE_LAYER_LIFT));
@@ -940,7 +1071,9 @@ export function drawPreview3d() {
   gl.uniform1f(program.uCameraDistance, 5.1 / Math.max(0.55, state.preview.zoom));
   gl.uniform1f(program.uFov, 0.72);
 
-  const translucentSurface = (state.preview.opacity ?? DEFAULT_SURFACE_OPACITY) < 0.999;
+  const mode = state.preview.displayMode || "solid";
+  const previewOpacity = mode === "xray" ? 0.34 : mode === "transparent" ? 0.72 : state.preview.opacity ?? DEFAULT_SURFACE_OPACITY;
+  const translucentSurface = previewOpacity < 0.999;
   gl.enable(gl.POLYGON_OFFSET_FILL);
   gl.polygonOffset(1.0, 1.0);
   gl.depthMask(!translucentSurface);
@@ -949,7 +1082,7 @@ export function drawPreview3d() {
     texture: tex?.texture,
     texRect: tex?.texRect || [0, 0, 1, 1],
     imageStrength: tex ? 1.0 : 0,
-    opacity: state.preview.opacity ?? DEFAULT_SURFACE_OPACITY,
+    opacity: previewOpacity,
     lighting: !DEBUG_UV_COVERAGE,
     twoSidedLighting: isNonOrientable(map)
   });
@@ -958,6 +1091,7 @@ export function drawPreview3d() {
   gl.depthFunc(gl.LEQUAL);
   gl.depthMask(!translucentSurface);
   drawMesh(grid, { useTexture: false, lighting: false });
+  if (state.preview.silhouette && !grid.length) drawMesh(buildGridMesh(map, domain), { useTexture: false, lighting: false });
 
   if (paintTexture && !DEBUG_UV_COVERAGE) {
     gl.enable(gl.POLYGON_OFFSET_FILL);
@@ -987,6 +1121,7 @@ export function drawPreview3d() {
   }
   gl.depthMask(true);
   updateSummary(map);
+  updateSurfaceAccuracy(map);
 }
 
 function isNonOrientable(map) {
@@ -999,7 +1134,7 @@ function shouldBakePaintToSurface(map) {
   // randomly hidden. Baking the paint into the surface texture keeps every mark
   // on the actual cell coordinates and lets depth testing hide only genuinely
   // far-side surface regions.
-  return map.type === "klein" || map.type === "double-reversed" || map.type === "mobius";
+  return map.type === "klein" || map.type === "double-reversed" || map.type === "mobius" || state.objects.some(object => (object.type === "rectangle" || object.type === "ellipse" || object.type === "polygon") && object.shapeMode && object.shapeMode !== "outline");
 }
 
 function twistAppliesToMap(map) {
@@ -1035,6 +1170,50 @@ function updateSummary(map) {
   const twist = Math.round(state.preview.twist || 0);
   const twistText = twist && twistAppliesToMap(map) ? ` · twist ${twist}°` : "";
   state.ui.preview3dSummary.textContent = `${label} · ${representation}${audit}${twistText} · |v1| ${l1} · |v2| ${l2}`;
+}
+
+function updateSurfaceAccuracy(map) {
+  if (!state.ui.surfaceAccuracyText) return;
+  const seam = seamErrorForMap(map);
+  const topo = map.type === "double-reversed" ? "Projective plane" : map.type === "klein" ? "Klein bottle" : map.typeLabel || map.type;
+  const gluing = map.type === "double-reversed"
+    ? "both edge pairs reversed"
+    : map.type === "klein"
+      ? "one preserved pair and one reversed pair"
+      : map.type === "torus"
+        ? "both edge pairs preserved"
+        : map.type === "mobius"
+          ? "one reversed linked pair"
+          : map.type === "cylinder"
+            ? "one preserved linked pair"
+            : "open cell";
+  const note = map.type === "klein"
+    ? "A Klein bottle cannot be embedded in ordinary 3D without self-intersection; this is a smooth seam-exact immersion."
+    : map.type === "double-reversed"
+      ? "A projective plane cannot be embedded in ordinary 3D without self-intersection; this is a smooth seam-exact immersion."
+      : map.type === "torus"
+        ? "A perfectly flat torus cannot be embedded in ordinary 3D without distortion; this preview is a standard 3D torus immersion."
+        : "This preview is generated directly from the fundamental cell and edge gluing.";
+  state.ui.surfaceAccuracyText.textContent = `${topo} · ${gluing} · seam error ${seam.toExponential(2)}. ${note}`;
+}
+
+function seamErrorForMap(map) {
+  let max = 0;
+  const add = (a, b) => { max = Math.max(max, Math.hypot(a[0] - b[0], a[1] - b[1], a[2] - b[2])); };
+  for (let i = 0; i <= 24; i++) {
+    const t = i / 24;
+    if (map.type === "torus") { add(map.point(0, t), map.point(1, t)); add(map.point(t, 0), map.point(t, 1)); }
+    else if (map.type === "klein") {
+      if (map.reversedV1) { add(map.point(t, 0), map.point(t, 1)); add(map.point(0, t), map.point(1, 1 - t)); }
+      else { add(map.point(0, t), map.point(1, t)); add(map.point(t, 0), map.point(1 - t, 1)); }
+    } else if (map.type === "double-reversed") { add(map.point(0, t), map.point(1, 1 - t)); add(map.point(t, 0), map.point(1 - t, 1)); }
+    else if (map.type === "mobius") {
+      if (map.loopU) add(map.point(0, t), map.point(1, 1 - t)); else add(map.point(t, 0), map.point(1 - t, 1));
+    } else if (map.type === "cylinder") {
+      if (map.repeatU) add(map.point(0, t), map.point(1, t)); else add(map.point(t, 0), map.point(t, 1));
+    }
+  }
+  return max;
 }
 
 function drawFallback() {

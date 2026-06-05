@@ -6,8 +6,16 @@ import { requestRender } from "./render2d.js";
 import { drawPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { closePanels, showStatus } from "./dom.js";
 import { ensureLayerModel, serializableLayers, restoreLayersFromData, renderLayerPanel, imageLayer, syncImageLayerFromLegacyState } from "./layers.js";
+import { clearAutosave, loadAutosave, saveAutosave } from "./projectStore.js";
 
-const STORAGE_KEY = "torus-drawing-app.autosave.v10";
+const STORAGE_KEY = "torus-drawing-app.autosave.v10"; // small legacy fallback only
+
+function previewOpacityForMode(mode) {
+  if (mode === "xray") return 0.34;
+  if (mode === "front") return 1.0;
+  if (mode === "transparent") return 0.72;
+  return 1.0;
+}
 
 export function serializeProject() {
   return {
@@ -27,8 +35,11 @@ export function serializeProject() {
     layers: serializableLayers(),
     activeLayerId: state.activeLayerId,
     nextLayerId: state.nextLayerId,
-    previewTransparent: state.preview.transparent !== false,
-    previewTwist: state.preview.twist || 0
+    previewTransparent: state.preview.transparent === true,
+    previewTwist: state.preview.twist || 0,
+    previewShowGrid: state.preview.showGrid !== false,
+    previewDisplayMode: state.preview.displayMode || "solid",
+    previewSilhouette: state.preview.silhouette === true
   };
 }
 
@@ -47,9 +58,12 @@ export async function restoreProject(data, silent = false) {
   state.imageFitMode = data.imageFitMode === "stretch" ? "stretch" : "crop";
   state.imageOpacity = Number.isFinite(data.imageOpacity) ? data.imageOpacity : 0.9;
   state.preview.enhanced = true;
-  state.preview.transparent = data.previewTransparent !== false;
-  state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
+  state.preview.transparent = data.previewTransparent === true;
+  state.preview.displayMode = data.previewDisplayMode || (state.preview.transparent ? "transparent" : "solid");
+  state.preview.opacity = previewOpacityForMode(state.preview.displayMode);
   state.preview.twist = Math.max(0, Math.min(540, Number(data.previewTwist || 0)));
+  state.preview.showGrid = data.previewShowGrid !== false;
+  state.preview.silhouette = data.previewSilhouette === true;
   state.undoStack = [];
   state.redoStack = [];
 
@@ -66,6 +80,8 @@ export async function restoreProject(data, silent = false) {
   syncImageUi();
   syncZoomSlider();
   if (state.ui.previewTwistInput) state.ui.previewTwistInput.value = String(state.preview.twist || 0);
+  if (state.ui.preview3dGridInput) state.ui.preview3dGridInput.checked = state.preview.showGrid !== false;
+  if (state.ui.previewSilhouetteInput) state.ui.previewSilhouetteInput.checked = state.preview.silhouette === true;
   state.ui.undoButton.disabled = true;
   state.ui.redoButton.disabled = true;
   requestRender();
@@ -74,16 +90,32 @@ export async function restoreProject(data, silent = false) {
 
 export function scheduleAutosave() {
   clearTimeout(state.autosaveTimer);
-  state.autosaveTimer = setTimeout(() => {
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(serializeProject())); } catch { /* Large images may exceed storage. */ }
+  state.autosaveTimer = setTimeout(async () => {
+    const project = serializeProject();
+    try {
+      await saveAutosave(project);
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ version: project.version, indexedDb: true, savedAt: Date.now() })); } catch {}
+    } catch {
+      try { localStorage.setItem(STORAGE_KEY, JSON.stringify(project)); } catch { /* Large images may exceed legacy storage. */ }
+    }
   }, 250);
 }
 
 export async function restoreAutosave() {
   try {
+    const stored = await loadAutosave();
+    if (stored) {
+      await restoreProject(stored, true);
+      showStatus("Restored previous drawing.");
+      return;
+    }
+  } catch { /* Fall back to legacy localStorage. */ }
+  try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
-    await restoreProject(JSON.parse(raw), true);
+    const parsed = JSON.parse(raw);
+    if (parsed?.indexedDb) return;
+    await restoreProject(parsed, true);
     showStatus("Restored previous drawing.");
   } catch { /* Ignore invalid autosave. */ }
 }
@@ -109,11 +141,16 @@ export function resetEverything() {
   state.eraserSize = 20;
   state.tool = "pen";
   state.eraserMode = "object";
+  state.shapeMode = "outline";
+  state.selectedObjectId = null;
   state.imageFitMode = "crop";
   state.imageOpacity = 0.9;
   state.preview.enhanced = true;
-  state.preview.transparent = true;
-  state.preview.opacity = 0.8;
+  state.preview.transparent = false;
+  state.preview.opacity = 1.0;
+  state.preview.displayMode = "solid";
+  state.preview.showGrid = true;
+  state.preview.silhouette = false;
   state.preview.twist = 0;
   state.background = { image: null, dataUrl: null, naturalWidth: 1, naturalHeight: 1 };
   state.layers = [
@@ -134,6 +171,8 @@ export function resetEverything() {
   syncImageUi();
   syncZoomSlider();
   if (state.ui.previewTwistInput) state.ui.previewTwistInput.value = "0";
+  if (state.ui.preview3dGridInput) state.ui.preview3dGridInput.checked = true;
+  if (state.ui.previewSilhouetteInput) state.ui.previewSilhouetteInput.checked = false;
   state.ui.undoButton.disabled = true;
   state.ui.redoButton.disabled = true;
   state.ui.penButton.classList.add("active");
@@ -141,6 +180,7 @@ export function resetEverything() {
   if (state.ui.ellipseButton) state.ui.ellipseButton.classList.remove("active");
   if (state.ui.rectangleButton) state.ui.rectangleButton.classList.remove("active");
   state.ui.dotButton.classList.remove("active");
+  if (state.ui.selectButton) state.ui.selectButton.classList.remove("active");
   state.ui.eraseButton.classList.remove("active");
   state.ui.homButton.classList.remove("active");
   state.ui.panButton.classList.remove("active");
@@ -157,6 +197,7 @@ export function resetEverything() {
 
   // Remove saved browser state so a reload comes back completely clean.
   try { localStorage.removeItem(STORAGE_KEY); } catch { /* Storage can be unavailable in some browser modes. */ }
+  clearAutosave().catch(() => {});
 
   centerView();
   resetPreviewAngle();

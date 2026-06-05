@@ -55,8 +55,17 @@
         <button id="lineButton" class="tool-button" title="Line — 2 or L. Shift snaps; Alt draws from center.">Line</button>
         <button id="ellipseButton" class="tool-button" title="Ellipse — 3 or O. Shift makes a circle; Alt draws from center.">Ellipse</button>
         <button id="rectangleButton" class="tool-button" title="Rectangle — 4 or R. Shift makes a square; Alt draws from center.">Rect</button>
+        <div id="shapeModeControls" class="tool-group shape-mode-controls" hidden aria-label="Shape fill mode">
+          <button id="shapeOutlineButton" class="mini-toggle active" type="button">Outline</button>
+          <button id="shapeFillButton" class="mini-toggle" type="button">Fill</button>
+        </div>
         <button id="dotButton" class="tool-button" title="Dot — 5. Hold D for one temporary dot.">Dot</button>
-        <button id="eraseButton" class="tool-button" title="Erase — 6 or E. Shift+6 toggles eraser mode. Shift+E also works.">Erase</button>
+        <button id="selectButton" class="tool-button" title="Select — 6 or S. Move, transform, or edit object points.">Select</button>
+        <div id="selectModeControls" class="tool-group select-mode-controls" hidden aria-label="Select mode">
+          <button id="selectTransformButton" class="mini-toggle active" type="button" title="Move, resize, rotate, flip, group">Transform</button>
+          <button id="selectPointsButton" class="mini-toggle" type="button" title="Edit anchor points and curve handles">Points</button>
+        </div>
+        <button id="eraseButton" class="tool-button" title="Erase — 7 or E. Shift+7 toggles eraser mode. Shift+E also works.">Erase</button>
         <div id="eraserOptions" class="tool-group eraser-options" hidden>
           <button id="eraseObjectButton" class="mini-toggle active" title="Remove whole strokes when touched">Object</button>
           <button id="eraseRubButton" class="mini-toggle" title="Rub through strokes like a normal eraser">Rub</button>
@@ -64,9 +73,30 @@
       </div>
     </section>
 
+    <section id="selectionActions" class="selection-actions" aria-label="Selected object actions" hidden>
+      <button id="duplicateSelectionButton" class="mini-toggle" type="button">Duplicate</button>
+      <button id="deleteSelectionButton" class="mini-toggle danger" type="button">Delete</button>
+      <button id="flipSelectionHButton" class="mini-toggle" type="button" title="Flip horizontally">Flip H</button>
+      <button id="flipSelectionVButton" class="mini-toggle" type="button" title="Flip vertically">Flip V</button>
+      <button id="groupSelectionButton" class="mini-toggle" type="button">Group</button>
+      <button id="ungroupSelectionButton" class="mini-toggle" type="button">Ungroup</button>
+      <button id="addPathPointButton" class="mini-toggle" type="button">+ Point</button>
+      <button id="togglePathPointModeButton" class="mini-toggle" type="button">Curve</button>
+      <button id="deletePathPointButton" class="mini-toggle" type="button">Delete point</button>
+      <label class="selection-number-label">W <input id="selectionWidthInput" type="number" min="1" step="1" /></label>
+      <label class="selection-number-label">H <input id="selectionHeightInput" type="number" min="1" step="1" /></label>
+      <button id="applySelectionSizeButton" class="mini-toggle" type="button">Apply</button>
+    </section>
+
+    <section id="mobileModifierBar" class="mobile-modifier-bar" aria-label="Touch modifiers">
+      <button id="touchConstrainButton" class="mini-toggle" type="button">Constrain</button>
+      <button id="touchCenterButton" class="mini-toggle" type="button">From center</button>
+      <button id="touchSnapButton" class="mini-toggle" type="button">Snap</button>
+    </section>
+
     <section id="navigationTools" aria-label="View and analysis tools">
-      <button id="panButton" class="tool-button" title="Pan — 7 or V. Hold Space for temporary pan.">Pan</button>
-      <button id="homButton" class="tool-button" title="Homology — 8. Click a stroke to inspect its cell displacement.">Hom</button>
+      <button id="panButton" class="tool-button" title="Pan — 8 or V. Hold Space for temporary pan.">Pan</button>
+      <button id="homButton" class="tool-button" title="Homology — 9. Click a stroke to inspect its cell displacement.">Hom</button>
     </section>
 
     <section id="surfacePanel" class="panel" aria-label="Surface controls">
@@ -186,6 +216,31 @@
           <span>Transparent model</span>
           <input id="preview3dTransparencyInput" type="checkbox" checked />
         </label>
+        <label class="preview-toggle-control" title="Show grid lines in the 3D preview">
+          <span>3D grid</span>
+          <input id="preview3dGridInput" type="checkbox" checked />
+        </label>
+      </div>
+      <div class="surface-section preview-actions-section">
+        <div class="surface-section-title">3D controls</div>
+        <div class="panel-actions compact-panel-actions">
+          <button id="preview3dResetViewButton" class="ghost-button" type="button">Reset view</button>
+          <button id="preview3dExportButton" class="ghost-button" type="button">Export 3D</button>
+        </div>
+        <div class="segmented-control display-mode-control" aria-label="3D display mode">
+          <button id="previewModeSolidButton" class="mini-toggle active" type="button">Solid</button>
+          <button id="previewModeTransparentButton" class="mini-toggle" type="button">Transparent</button>
+          <button id="previewModeXrayButton" class="mini-toggle" type="button">X-ray</button>
+          <button id="previewModeFrontButton" class="mini-toggle" type="button">Front</button>
+        </div>
+        <label class="preview-toggle-control" title="Subtle outline for complex 3D surfaces">
+          <span>Silhouette</span>
+          <input id="previewSilhouetteInput" type="checkbox" />
+        </label>
+      </div>
+      <div id="surfaceAccuracyPanel" class="surface-section surface-accuracy-panel">
+        <div class="surface-section-title">Surface accuracy</div>
+        <div id="surfaceAccuracyText" class="surface-accuracy-text">Open a surface preview to calculate seam checks.</div>
       </div>
     </section>
 
@@ -205,10 +260,11 @@
         <div><kbd>4</kbd> / <kbd>R</kbd></div><div>Rectangle</div>
         <div><kbd>5</kbd></div><div>Dot tool</div>
         <div><kbd>Hold D</kbd></div><div>Temporary dot</div>
-        <div><kbd>6</kbd> / <kbd>E</kbd></div><div>Erase</div>
-        <div><kbd>Shift+6</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
-        <div><kbd>7</kbd> / <kbd>V</kbd></div><div>Pan</div>
-        <div><kbd>8</kbd></div><div>Homology tool</div>
+        <div><kbd>6</kbd> / <kbd>S</kbd></div><div>Select</div>
+        <div><kbd>7</kbd> / <kbd>E</kbd></div><div>Erase</div>
+        <div><kbd>Shift+7</kbd> / <kbd>Shift+E</kbd></div><div>Toggle eraser mode</div>
+        <div><kbd>8</kbd> / <kbd>V</kbd></div><div>Pan</div>
+        <div><kbd>9</kbd></div><div>Homology tool</div>
         <div><kbd>Shift</kbd></div><div>Snap line / constrain shape</div>
         <div><kbd>Alt</kbd></div><div>Draw line/shape from center</div>
         <div><kbd>Space</kbd></div><div>Temporary pan</div>

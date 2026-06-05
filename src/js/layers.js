@@ -325,39 +325,49 @@ export function renderLayerPanel(updateThumbnails = true) {
     row.dataset.layerId = layer.id;
     row.dataset.visualIndex = String(visualIndex);
     const percent = Math.round((layer.opacity ?? 1) * 100);
-    row.innerHTML = `
-      <div class="layer-card-main">
-        <span class="layer-thumb"></span>
-        <span class="layer-name">${escapeHtml(layer.name || "Layer")}</span>
-        <span class="layer-percent">${percent}%</span>
-        <button class="layer-eye ${layer.visible === false ? "is-hidden" : "is-visible"}" type="button" title="${layer.visible === false ? "Show layer" : "Hide layer"}" aria-label="${layer.visible === false ? "Show layer" : "Hide layer"}"><span class="eye-icon"></span></button>
-        <button class="layer-delete" type="button" title="Delete layer" aria-label="Delete layer">🗑</button>
-      </div>
-      <input class="layer-opacity-slider" type="range" min="0" max="100" value="${percent}" aria-label="Layer opacity" />
-    `;
-    row.onclick = event => {
-      if (event.target.closest(".layer-control, .layer-eye, .layer-delete, .layer-opacity-slider")) return;
-      selectLayer(layer.id);
-    };
-    row.onpointerdown = event => startLayerPress(event, layer.id);
+    const main = document.createElement("div");
+    main.className = "layer-card-main";
 
-    row.querySelector(".layer-eye").onclick = event => {
-      event.stopPropagation();
-      toggleLayerVisibility(layer.id);
-    };
+    const thumb = document.createElement("span");
+    thumb.className = "layer-thumb";
 
-    row.querySelector(".layer-delete").onclick = event => {
-      event.stopPropagation();
-      removeLayer(layer.id);
-    };
+    const name = document.createElement("span");
+    name.className = "layer-name";
+    name.textContent = layer.name || "Layer";
 
-    const slider = row.querySelector(".layer-opacity-slider");
-    slider.oninput = event => setLayerOpacity(layer.id, event.target.value);
-    slider.onpointerdown = event => event.stopPropagation();
-    slider.onclick = event => event.stopPropagation();
+    const percentEl = document.createElement("span");
+    percentEl.className = "layer-percent";
+    percentEl.textContent = `${percent}%`;
 
+    const eye = document.createElement("button");
+    eye.className = `layer-eye ${layer.visible === false ? "is-hidden" : "is-visible"}`;
+    eye.type = "button";
+    eye.title = layer.visible === false ? "Show layer" : "Hide layer";
+    eye.setAttribute("aria-label", eye.title);
+    const eyeIcon = document.createElement("span");
+    eyeIcon.className = "eye-icon";
+    eye.appendChild(eyeIcon);
+
+    const del = document.createElement("button");
+    del.className = "layer-delete";
+    del.type = "button";
+    del.title = "Delete layer";
+    del.setAttribute("aria-label", "Delete layer");
+    del.textContent = "🗑";
+
+    main.append(thumb, name, percentEl, eye, del);
+
+    const slider = document.createElement("input");
+    slider.className = "layer-opacity-slider";
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.value = String(percent);
+    slider.setAttribute("aria-label", "Layer opacity");
+
+    row.append(main, slider);
     state.ui.layerList.appendChild(row);
-    if (updateThumbnails) renderThumbnailInto(row.querySelector(".layer-thumb"), layer);
+    if (updateThumbnails) renderThumbnailInto(thumb, layer);
   });
 }
 

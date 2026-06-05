@@ -2,6 +2,7 @@
 import { state } from "./state.js";
 import { add, cellPoint, cellTransform, displacement, edgeTopology, length, pointUv, scale, visibleOffsets, viewportWorldCorners, worldToBasis, worldToScreen } from "./math.js";
 import { analyzeSurfaceQuality } from "./surfaceQuality.js";
+import { getRasterCanvas } from "./rasterStore.js";
 
 export function requestRender() {
   if (state.renderQueued) return;
@@ -132,14 +133,61 @@ function transformedObjectPoint(objectPoint, offset) {
   return cellPoint(state.surface, offset, uv);
 }
 
+function transformedLinePoints(object, offset) {
+  return (object.points || []).map(point => {
+    const base = transformedObjectPoint(point, offset);
+    if (!base) return null;
+    const next = { ...base };
+    if (point.inHandle) next.inHandle = { ...point.inHandle };
+    if (point.outHandle) next.outHandle = { ...point.outHandle };
+    return next;
+  }).filter(Boolean);
+}
+
+
+function rasterFramePoints(object, offset) {
+  const pts = object.points || [];
+  if (!pts[0]) return null;
+  const origin = transformedObjectPoint(pts[0], offset);
+  let xCorner = pts[1] ? transformedObjectPoint(pts[1], offset) : null;
+  let yCorner = pts[2] ? transformedObjectPoint(pts[2], offset) : null;
+  if (!origin || !xCorner) return null;
+  if (!yCorner) yCorner = transformedObjectPoint({ x: pts[0].x, y: pts[1].y, u: pts[0].u, v: pts[1].v }, offset);
+  if (!yCorner) return null;
+  const xAxis = { x: xCorner.x - origin.x, y: xCorner.y - origin.y };
+  const yAxis = { x: yCorner.x - origin.x, y: yCorner.y - origin.y };
+  return { origin, xCorner, yCorner, xAxis, yAxis, fourth: { x: xCorner.x + yAxis.x, y: xCorner.y + yAxis.y } };
+}
+function rasterFrameBasePoints(object) {
+  const pts = object.points || [];
+  if (!pts[0] || !pts[1]) return [];
+  const origin = pts[0];
+  const xCorner = pts[1];
+  const yCorner = pts[2] || { x: pts[0].x, y: pts[1].y, u: pts[0].u, v: pts[1].v };
+  const fourth = { x: xCorner.x + (yCorner.x - origin.x), y: xCorner.y + (yCorner.y - origin.y) };
+  return [origin, xCorner, fourth, yCorner, origin];
+}
+
+function rotatePoint(point, center, angle) {
+  if (!angle) return point;
+  const c = Math.cos(angle), s = Math.sin(angle);
+  const dx = point.x - center.x, dy = point.y - center.y;
+  return { x: center.x + dx * c - dy * s, y: center.y + dx * s + dy * c };
+}
+
 function drawShapePath(ctx, object, points) {
   if (object.type === "rectangle") {
     if (points.length < 2) return false;
     const a = points[0], b = points[1];
     const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
     const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+    const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
     ctx.beginPath();
-    ctx.rect(x0, y0, x1 - x0, y1 - y0);
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(object.rotation || 0);
+    ctx.rect(-(x1 - x0) / 2, -(y1 - y0) / 2, x1 - x0, y1 - y0);
+    ctx.restore();
     return true;
   }
   if (object.type === "ellipse") {
@@ -150,7 +198,7 @@ function drawShapePath(ctx, object, points) {
     const rx = Math.abs(b.x - a.x) / 2;
     const ry = Math.abs(b.y - a.y) / 2;
     ctx.beginPath();
-    ctx.ellipse(cx, cy, rx, ry, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx, cy, rx, ry, object.rotation || 0, 0, Math.PI * 2);
     return true;
   }
   return false;
@@ -162,31 +210,103 @@ function shapeOutlinePoints(object) {
   if (!a || !b) return [];
   const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
   const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  const angle = object.rotation || 0;
   if (object.type === "rectangle") {
-    return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }];
+    return [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }, { x: x0, y: y0 }].map(point => rotatePoint(point, center, angle));
   }
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
   const rx = Math.abs(x1 - x0) / 2, ry = Math.abs(y1 - y0) / 2;
   const points = [];
   for (let i = 0; i <= 144; i++) {
     const t = Math.PI * 2 * i / 144;
-    points.push({ x: cx + Math.cos(t) * rx, y: cy + Math.sin(t) * ry });
+    points.push(rotatePoint({ x: center.x + Math.cos(t) * rx, y: center.y + Math.sin(t) * ry }, center, angle));
   }
   return points;
 }
 
-function drawPolyline(ctx, points) {
+function nodeHandlePoint(node, key) {
+  const handle = node?.[key];
+  return handle ? { x: node.x + handle.dx, y: node.y + handle.dy } : null;
+}
+
+function drawLineObjectPath(ctx, points, object) {
   if (points.length < 2) return false;
+  ctx.beginPath();
+  ctx.moveTo(points[0].x, points[0].y);
+  for (let i = 1; i < points.length; i++) {
+    const prev = points[i - 1], next = points[i];
+    const c1 = nodeHandlePoint(prev, "outHandle");
+    const c2 = nodeHandlePoint(next, "inHandle");
+    if (c1 || c2) ctx.bezierCurveTo(c1?.x ?? prev.x, c1?.y ?? prev.y, c2?.x ?? next.x, c2?.y ?? next.y, next.x, next.y);
+    else ctx.lineTo(next.x, next.y);
+  }
+  return true;
+}
+
+function sampleDisplayLinePoints(points, object, segments = 18) {
+  if (points.length < 2) return points;
+  const out = [{ ...points[0] }];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1], b = points[i];
+    const c1 = nodeHandlePoint(a, "outHandle");
+    const c2 = nodeHandlePoint(b, "inHandle");
+    if (!(c1 || c2)) { out.push({ ...b }); continue; }
+    for (let step = 1; step <= segments; step++) {
+      const t = step / segments, mt = 1 - t;
+      out.push({
+        x: mt ** 3 * a.x + 3 * mt ** 2 * t * (c1?.x ?? a.x) + 3 * mt * t ** 2 * (c2?.x ?? b.x) + t ** 3 * b.x,
+        y: mt ** 3 * a.y + 3 * mt ** 2 * t * (c1?.y ?? a.y) + 3 * mt * t ** 2 * (c2?.y ?? b.y) + t ** 3 * b.y
+      });
+    }
+  }
+  return out;
+}
+
+function drawPolyline(ctx, points, object = null) {
+  if (points.length < 2) return false;
+  if (object?.type === "line") return drawLineObjectPath(ctx, points, object);
   ctx.beginPath();
   ctx.moveTo(points[0].x, points[0].y);
   for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
   return true;
 }
 
+function drawEraseCuts(ctx, object, offset) {
+  if (!object.eraseHoles?.length) return;
+  ctx.save();
+  ctx.globalCompositeOperation = "destination-out";
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  let previous = null;
+  for (const hole of object.eraseHoles) {
+    const center = transformedObjectPoint(hole, offset);
+    if (!center) { previous = null; continue; }
+    const radius = Math.max(0.5, hole.radius || 1);
+    if (previous) {
+      const bridgeWidth = Math.max(radius, previous.radius) * 2;
+      const maxBridge = Math.max(radius, previous.radius) * 5.5;
+      const dx = center.x - previous.x;
+      const dy = center.y - previous.y;
+      if (Math.hypot(dx, dy) <= maxBridge) {
+        ctx.beginPath();
+        ctx.lineWidth = bridgeWidth;
+        ctx.moveTo(previous.x, previous.y);
+        ctx.lineTo(center.x, center.y);
+        ctx.stroke();
+      }
+    }
+    ctx.beginPath();
+    ctx.arc(center.x, center.y, radius, 0, Math.PI * 2);
+    ctx.fill();
+    previous = { x: center.x, y: center.y, radius };
+  }
+  ctx.restore();
+}
+
 export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
   if (!object || !object.points?.length) return;
   const { ctx } = state;
-  const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  const points = object.type === "line" ? transformedLinePoints(object, offset) : object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
   if (!points.length) return;
   ctx.save();
   ctx.strokeStyle = object.color;
@@ -199,8 +319,20 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
     const radius = Math.max(0.5, (object.size || 8) / 2);
     for (const point of points) {
       ctx.beginPath();
-      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2, true);
+        ctx.closePath();
       ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (object.type === "raster") {
+    const frame = rasterFramePoints(object, offset);
+    const canvas = getRasterCanvas(object, requestRender);
+    if (frame && canvas) {
+      ctx.transform(frame.xAxis.x, frame.xAxis.y, frame.yAxis.x, frame.yAxis.y, frame.origin.x, frame.origin.y);
+      ctx.drawImage(canvas, 0, 0, 1, 1);
     }
     ctx.restore();
     return;
@@ -208,17 +340,40 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
 
   if (object.type === "rectangle" || object.type === "ellipse") {
     ctx.lineWidth = object.size;
-    const outline = shapeOutlinePoints(object).map(point => transformedObjectPoint(point, offset)).filter(Boolean);
-    if (drawPolyline(ctx, outline)) ctx.stroke();
+    ctx.fillStyle = object.fillColor || object.color;
+    const mode = object.shapeMode || "outline";
+    if (drawShapePath(ctx, object, points)) {
+      if (mode === "fill") {
+        ctx.fill();
+        drawEraseCuts(ctx, object, offset);
+      } else ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (object.type === "polygon") {
+    ctx.lineWidth = object.size;
+    ctx.fillStyle = object.fillColor || object.color;
+    if (points.length >= 2) {
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, points[0].y);
+      for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+      ctx.closePath();
+      if ((object.shapeMode || "outline") === "fill") {
+        ctx.fill();
+        drawEraseCuts(ctx, object, offset);
+      } else ctx.stroke();
+    }
     ctx.restore();
     return;
   }
 
   if (points.length < 2) { ctx.restore(); return; }
   ctx.lineWidth = object.size;
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
   if (object.type === "pen" && points.length > 2) {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
     for (let i = 1; i < points.length - 1; i++) {
       const p = points[i], n = points[i + 1];
       ctx.quadraticCurveTo(p.x, p.y, (p.x + n.x) / 2, (p.y + n.y) / 2);
@@ -226,7 +381,7 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
     const last = points.at(-1);
     ctx.lineTo(last.x, last.y);
   } else {
-    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+    drawPolyline(ctx, points, object);
   }
   ctx.stroke();
   ctx.restore();
@@ -235,7 +390,7 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
 function drawObjectHalo(object, offset, selected) {
   if (!object || !object.points?.length) return;
   const { ctx } = state;
-  const points = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  const points = object.type === "line" ? transformedLinePoints(object, offset) : object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
   if (!points.length) return;
   ctx.save();
   ctx.strokeStyle = selected ? "rgba(30, 80, 190, 0.42)" : "rgba(30, 30, 30, 0.20)";
@@ -246,22 +401,41 @@ function drawObjectHalo(object, offset, selected) {
     const radius = Math.max(0.5, (object.size || 8) / 2) + (selected ? 5 : 3) / state.view.zoom;
     for (const point of points) {
       ctx.beginPath();
-      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2);
+      ctx.arc(point.x, point.y, radius, 0, Math.PI * 2, true);
+        ctx.closePath();
       ctx.stroke();
+    }
+    ctx.restore();
+    return;
+  }
+  if (object.type === "raster") {
+    const frame = rasterFramePoints(object, offset);
+    if (frame) {
+      const outline = [frame.origin, frame.xCorner, frame.fourth, frame.yCorner, frame.origin];
+      if (drawPolyline(ctx, outline, object)) ctx.stroke();
     }
     ctx.restore();
     return;
   }
   if (object.type === "rectangle" || object.type === "ellipse") {
     const outline = shapeOutlinePoints(object).map(point => transformedObjectPoint(point, offset)).filter(Boolean);
-    if (drawPolyline(ctx, outline)) ctx.stroke();
+    if (drawPolyline(ctx, outline, object)) ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  if (object.type === "polygon") {
+    const outline = [...object.points, object.points[0]].map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+    if (drawPolyline(ctx, outline, object)) ctx.stroke();
     ctx.restore();
     return;
   }
   if (points.length < 2) { ctx.restore(); return; }
-  ctx.beginPath();
-  ctx.moveTo(points[0].x, points[0].y);
-  for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  if (object.type === "line") drawPolyline(ctx, points, object);
+  else {
+    ctx.beginPath();
+    ctx.moveTo(points[0].x, points[0].y);
+    for (let i = 1; i < points.length; i++) ctx.lineTo(points[i].x, points[i].y);
+  }
   ctx.stroke();
   ctx.restore();
 }
@@ -373,6 +547,293 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
+function drawSelectionOverlay(offsets) {
+  if (state.tool !== "select") return;
+  const selectedIds = state.selectedObjectIds?.length ? state.selectedObjectIds : (state.selectedObjectId != null ? [state.selectedObjectId] : []);
+  const selected = state.objects.filter(object => selectedIds.includes(object.id));
+  for (const offset of offsets) {
+    for (const object of selected) drawObjectHalo(object, offset, true);
+    if (selected.length) drawSelectionHandles(selected, offset);
+  }
+  // The marquee rectangle must be visible while dragging even before any
+  // object has actually been selected/released.
+  drawSelectionMarquee();
+}
+
+function objectDisplayBounds(object, offset) {
+  const sourcePoints = object.type === "line" ? sampleDisplayLinePoints(object.points, object, 18) : (object.type === "rectangle" || object.type === "ellipse" ? shapeOutlinePoints(object) : (object.type === "raster" ? rasterFrameBasePoints(object) : object.points));
+  const points = sourcePoints.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  if (!points.length) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x); minY = Math.min(minY, point.y); maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y);
+  }
+  return { points, minX, minY, maxX, maxY, cx: (minX + maxX) / 2, cy: (minY + maxY) / 2 };
+}
+
+function dotRadiusForRender(object) { return Math.max(0.5, (object?.size || 20) / 2); }
+function shapeBoxHandlePoints(object, offset) {
+  if (!object || (object.type !== "rectangle" && object.type !== "ellipse") || object.points.length < 2) return null;
+  const [a, b] = object.points;
+  const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x);
+  const y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y);
+  const center = { x: (x0 + x1) / 2, y: (y0 + y1) / 2 };
+  const width = x1 - x0, height = y1 - y0;
+  const angle = object.rotation || 0;
+  const names = {
+    nw: [-width / 2, -height / 2], n: [0, -height / 2], ne: [width / 2, -height / 2],
+    e: [width / 2, 0], se: [width / 2, height / 2], s: [0, height / 2],
+    sw: [-width / 2, height / 2], w: [-width / 2, 0]
+  };
+  const out = {};
+  for (const [name, [dx, dy]] of Object.entries(names)) out[name] = transformedObjectPoint(rotatePoint({ x: center.x + dx, y: center.y + dy }, center, angle), offset);
+  out.center = transformedObjectPoint(center, offset);
+  out.rotate = transformedObjectPoint(rotatePoint({ x: center.x, y: center.y - height / 2 - 34 / state.view.zoom }, center, angle), offset);
+  return out;
+}
+
+function genericBoxHandlePoints(object, offset) {
+  if (!object || object.type === "dot" || !["pen", "line", "polygon", "raster"].includes(object.type)) return null;
+  const sourcePoints = object.type === "line" ? sampleDisplayLinePoints(object.points, object, 18) : (object.type === "polygon" ? [...object.points, object.points[0]] : (object.type === "raster" ? rasterFrameBasePoints(object) : object.points));
+  const samples = sourcePoints.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+  if (!samples.length) return null;
+  let rawMinX = Infinity, rawMinY = Infinity, rawMaxX = -Infinity, rawMaxY = -Infinity;
+  for (const point of samples) {
+    rawMinX = Math.min(rawMinX, point.x); rawMinY = Math.min(rawMinY, point.y);
+    rawMaxX = Math.max(rawMaxX, point.x); rawMaxY = Math.max(rawMaxY, point.y);
+  }
+  const center = { x: (rawMinX + rawMaxX) / 2, y: (rawMinY + rawMaxY) / 2 };
+  const angle = object.selectionRotation || 0;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of samples) {
+    const local = rotatePoint(point, center, -angle);
+    minX = Math.min(minX, local.x); minY = Math.min(minY, local.y);
+    maxX = Math.max(maxX, local.x); maxY = Math.max(maxY, local.y);
+  }
+  const localCenter = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  const names = {
+    nw: [minX, minY], n: [localCenter.x, minY], ne: [maxX, minY], e: [maxX, localCenter.y],
+    se: [maxX, maxY], s: [localCenter.x, maxY], sw: [minX, maxY], w: [minX, localCenter.y]
+  };
+  const out = {};
+  for (const [name, [x, y]] of Object.entries(names)) out[name] = rotatePoint({ x, y }, center, angle);
+  out.center = rotatePoint(localCenter, center, angle);
+  out.rotate = rotatePoint({ x: localCenter.x, y: minY - 34 / state.view.zoom }, center, angle);
+  return out;
+}
+
+function drawSelectionHandles(objects, offset) {
+  const { ctx } = state;
+  const handle = Math.max(5.8 / state.view.zoom, 3.4);
+  const activeFill = "rgba(30,80,190,.95)";
+  const inactiveFill = "rgba(255,255,255,.96)";
+  const stroke = "rgba(30,80,190,.95)";
+
+  function drawDotHandle(point, active = false, scale = 1) {
+    ctx.fillStyle = active ? activeFill : inactiveFill;
+    ctx.strokeStyle = stroke;
+    ctx.beginPath();
+    ctx.arc(point.x, point.y, handle * scale, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+  }
+
+  if (state.selectMode === "points") {
+    if (objects.length !== 1) return;
+    const object = objects[0];
+    ctx.save();
+    ctx.strokeStyle = "rgba(30,80,190,.78)";
+    ctx.fillStyle = inactiveFill;
+    ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.7);
+
+    if (object.type === "line") {
+      const selectedIndex = state.selectedNodeIndex;
+      for (let i = 0; i < object.points.length; i++) {
+        const p = transformedObjectPoint(object.points[i], offset);
+        if (!p) continue;
+        const inHandle = nodeHandlePoint(object.points[i], "inHandle");
+        const outHandle = nodeHandlePoint(object.points[i], "outHandle");
+        for (const [handlePoint, kind] of [[inHandle, "inHandle"], [outHandle, "outHandle"]]) {
+          const hp = handlePoint ? transformedObjectPoint(handlePoint, offset) : null;
+          if (!hp) continue;
+          const active = i === selectedIndex && state.selectedHandleKind === kind;
+          ctx.beginPath(); ctx.moveTo(p.x, p.y); ctx.lineTo(hp.x, hp.y); ctx.strokeStyle = "rgba(30,80,190,.45)"; ctx.stroke();
+          drawDotHandle(hp, active, active ? 1.15 : 0.85);
+        }
+        const nodeActive = i === selectedIndex && (!state.selectedHandleKind || state.selectedHandleKind === "node" || state.selectedHandleKind === "shapeNode");
+        drawDotHandle(p, nodeActive, nodeActive ? 1.25 : 1);
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (object.type === "polygon") {
+      const pts = object.points.map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+      if (pts.length) {
+        ctx.beginPath();
+        ctx.moveTo(pts[0].x, pts[0].y);
+        for (let i = 1; i < pts.length; i++) ctx.lineTo(pts[i].x, pts[i].y);
+        ctx.closePath();
+        ctx.strokeStyle = "rgba(30,80,190,.45)";
+        ctx.stroke();
+      }
+      for (let i = 0; i < object.points.length; i++) {
+        const p = transformedObjectPoint(object.points[i], offset);
+        if (p) drawDotHandle(p, i === state.selectedNodeIndex, i === state.selectedNodeIndex ? 1.25 : 1);
+      }
+      ctx.restore();
+      return;
+    }
+
+    if (object.type === "rectangle") {
+      const corners = shapeOutlinePoints(object).slice(0, 4).map(point => transformedObjectPoint(point, offset)).filter(Boolean);
+      if (corners.length) {
+        ctx.beginPath();
+        ctx.moveTo(corners[0].x, corners[0].y);
+        for (let i = 1; i < corners.length; i++) ctx.lineTo(corners[i].x, corners[i].y);
+        ctx.closePath();
+        ctx.strokeStyle = "rgba(30,80,190,.45)";
+        ctx.stroke();
+      }
+      for (let i = 0; i < corners.length; i++) drawDotHandle(corners[i], i === state.selectedNodeIndex, i === state.selectedNodeIndex ? 1.25 : 1);
+      ctx.restore();
+      return;
+    }
+
+    ctx.restore();
+    return;
+  }
+
+  if (objects.length === 1 && objects[0].type === "line") {
+    const object = objects[0];
+    ctx.save();
+    ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.7);
+    ctx.strokeStyle = stroke;
+    ctx.fillStyle = inactiveFill;
+    const first = transformedObjectPoint(object.points[0], offset);
+    const last = transformedObjectPoint(object.points.at(-1), offset);
+    if (first) drawDotHandle(first, false, 1);
+    if (last) drawDotHandle(last, false, 1);
+    const lineBox = genericBoxHandlePoints(object, offset);
+    if (lineBox?.rotate) {
+      const top = lineBox.n;
+      ctx.strokeStyle = "rgba(30,80,190,.55)";
+      ctx.beginPath(); ctx.moveTo(top.x, top.y); ctx.lineTo(lineBox.rotate.x, lineBox.rotate.y); ctx.stroke();
+      drawDotHandle(lineBox.rotate, state.selectedHandleKind === "rotate", 1);
+    }
+    ctx.restore();
+    return;
+  }
+
+  if (objects.length === 1 && objects[0].type === "dot") {
+    const object = objects[0];
+    const center = transformedObjectPoint(object.points[0], offset);
+    if (!center) return;
+    const rWorld = dotRadiusForRender(object);
+    const resize = transformedObjectPoint({ x: object.points[0].x + rWorld, y: object.points[0].y }, offset);
+    ctx.save();
+    ctx.strokeStyle = "rgba(30,80,190,.78)";
+    ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.6);
+    ctx.beginPath(); ctx.arc(center.x, center.y, rWorld, 0, Math.PI * 2); ctx.stroke();
+    if (resize) drawDotHandle(resize, state.selectedHandleKind === "dotResize", state.selectedHandleKind === "dotResize" ? 1.2 : 1);
+    ctx.restore();
+    return;
+  }
+
+  if (objects.length === 1 && (objects[0].type === "pen" || objects[0].type === "polygon" || objects[0].type === "raster")) {
+    const handles = genericBoxHandlePoints(objects[0], offset);
+    if (!handles) return;
+    ctx.save();
+    ctx.strokeStyle = "rgba(30,80,190,.78)";
+    ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.6);
+    ctx.beginPath();
+    ctx.moveTo(handles.nw.x, handles.nw.y); ctx.lineTo(handles.ne.x, handles.ne.y); ctx.lineTo(handles.se.x, handles.se.y); ctx.lineTo(handles.sw.x, handles.sw.y); ctx.closePath(); ctx.stroke();
+    for (const name of ["nw","n","ne","e","se","s","sw","w"]) drawDotHandle(handles[name], state.selectedHandleKind === "bbox", 1);
+    ctx.beginPath(); ctx.moveTo(handles.n.x, handles.n.y); ctx.lineTo(handles.rotate.x, handles.rotate.y); ctx.stroke();
+    drawDotHandle(handles.rotate, state.selectedHandleKind === "rotate", 1);
+    ctx.restore();
+    return;
+  }
+
+  if (objects.length === 1 && (objects[0].type === "rectangle" || objects[0].type === "ellipse")) {
+    const handles = shapeBoxHandlePoints(objects[0], offset);
+    if (!handles) return;
+    ctx.save();
+    ctx.strokeStyle = "rgba(30,80,190,.78)";
+    ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.6);
+    ctx.beginPath();
+    ctx.moveTo(handles.nw.x, handles.nw.y); ctx.lineTo(handles.ne.x, handles.ne.y); ctx.lineTo(handles.se.x, handles.se.y); ctx.lineTo(handles.sw.x, handles.sw.y); ctx.closePath(); ctx.stroke();
+    for (const name of ["nw","n","ne","e","se","s","sw","w"]) drawDotHandle(handles[name], state.selectedHandleKind === "bbox", 1);
+    ctx.beginPath(); ctx.moveTo(handles.n.x, handles.n.y); ctx.lineTo(handles.rotate.x, handles.rotate.y); ctx.stroke();
+    drawDotHandle(handles.rotate, state.selectedHandleKind === "rotate", 1);
+    ctx.restore();
+    return;
+  }
+
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const object of objects) {
+    const bounds = objectDisplayBounds(object, offset);
+    if (!bounds) continue;
+    minX = Math.min(minX, bounds.minX); minY = Math.min(minY, bounds.minY); maxX = Math.max(maxX, bounds.maxX); maxY = Math.max(maxY, bounds.maxY);
+  }
+  if (!Number.isFinite(minX)) return;
+  const pad = 8 / state.view.zoom;
+  let cx, cy, halfW, halfH, angle;
+  if (state.selectionGroupFrame && objects.length > 1) {
+    const frame = state.selectionGroupFrame;
+    const baseCenter = transformedObjectPoint({ x: frame.cx, y: frame.cy }, offset) || { x: frame.cx, y: frame.cy };
+    cx = baseCenter.x; cy = baseCenter.y;
+    halfW = frame.width / 2 + pad;
+    halfH = frame.height / 2 + pad;
+    angle = frame.rotation || 0;
+  } else {
+    minX -= pad; minY -= pad; maxX += pad; maxY += pad;
+    cx = (minX + maxX) / 2; cy = (minY + maxY) / 2;
+    halfW = (maxX - minX) / 2; halfH = (maxY - minY) / 2;
+    angle = state.selectionGroupRotation || 0;
+  }
+  const center = { x: cx, y: cy };
+  const handles = {
+    nw: rotatePoint({ x: cx - halfW, y: cy - halfH }, center, angle),
+    n: rotatePoint({ x: cx, y: cy - halfH }, center, angle),
+    ne: rotatePoint({ x: cx + halfW, y: cy - halfH }, center, angle),
+    e: rotatePoint({ x: cx + halfW, y: cy }, center, angle),
+    se: rotatePoint({ x: cx + halfW, y: cy + halfH }, center, angle),
+    s: rotatePoint({ x: cx, y: cy + halfH }, center, angle),
+    sw: rotatePoint({ x: cx - halfW, y: cy + halfH }, center, angle),
+    w: rotatePoint({ x: cx - halfW, y: cy }, center, angle)
+  };
+  handles.rotate = rotatePoint({ x: cx, y: cy - halfH - 26 / state.view.zoom }, center, angle);
+  ctx.save();
+  ctx.strokeStyle = "rgba(30,80,190,.78)";
+  ctx.fillStyle = inactiveFill;
+  ctx.lineWidth = Math.max(1.2 / state.view.zoom, 0.6);
+  ctx.setLineDash([6 / state.view.zoom, 5 / state.view.zoom]);
+  ctx.beginPath();
+  ctx.moveTo(handles.nw.x, handles.nw.y); ctx.lineTo(handles.ne.x, handles.ne.y); ctx.lineTo(handles.se.x, handles.se.y); ctx.lineTo(handles.sw.x, handles.sw.y); ctx.closePath(); ctx.stroke();
+  ctx.setLineDash([]);
+  for (const name of ["nw","n","ne","e","se","s","sw","w"]) drawDotHandle(handles[name], state.selectedHandleKind === "bbox", 1);
+  if (objects.some(object => object.type !== "dot")) {
+    ctx.beginPath(); ctx.moveTo(handles.n.x, handles.n.y); ctx.lineTo(handles.rotate.x, handles.rotate.y); ctx.stroke();
+    drawDotHandle(handles.rotate, state.selectedHandleKind === "rotate", 1);
+  }
+  ctx.restore();
+}
+
+function drawSelectionMarquee() {
+  const box = state.selectionBox;
+  if (!box) return;
+  const { ctx } = state;
+  ctx.save();
+  ctx.fillStyle = "rgba(30,80,190,.08)";
+  ctx.strokeStyle = "rgba(30,80,190,.55)";
+  ctx.lineWidth = Math.max(1 / state.view.zoom, 0.6);
+  ctx.setLineDash([6 / state.view.zoom, 5 / state.view.zoom]);
+  ctx.fillRect(box.minX, box.minY, box.maxX - box.minX, box.maxY - box.minY);
+  ctx.strokeRect(box.minX, box.minY, box.maxX - box.minX, box.maxY - box.minY);
+  ctx.restore();
+}
+
 function drawHomologyDirectionArrows() {
   if (state.tool !== "hom") return;
   const { ctx, surface, view } = state;
@@ -433,6 +894,7 @@ export function redraw(preview = state.previewObject) {
 
   drawHomologyDirectionArrows();
   drawHomologyOverlay(offsets);
+  drawSelectionOverlay(offsets);
   if (preview) for (const offset of offsets) drawObject(preview, offset, true);
   setScreenTransform();
 }

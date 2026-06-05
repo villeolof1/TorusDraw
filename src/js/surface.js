@@ -1,6 +1,6 @@
 // Surface and image settings. Typed surface edits apply only when Update is pressed.
 import { DEFAULT_SURFACE, state } from "./state.js";
-import { clamp, cloneSurface, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
+import { basisToWorld, clamp, cloneSurface, displacement, edgeTopology, length, normalizeEdgeLinks, scale, surfacesEqual, worldToBasis } from "./math.js";
 import { analyzeSurfaceQuality, qualityMessage } from "./surfaceQuality.js";
 import { requestRender, redraw } from "./render2d.js";
 import { drawPreview3d } from "./preview3d.js";
@@ -55,18 +55,6 @@ function validate(surface) {
   return null;
 }
 
-function hasOrientationReversingLinks(surface = state.surface) {
-  const topo = edgeTopology(surface);
-  return Boolean((topo.repeatV1 && topo.flipV) || (topo.repeatV2 && topo.flipU));
-}
-
-function showPreviewNoticeIfOpenPreviewBecameReversed() {
-  const previewIsOpen = state.ui.preview3dPanel?.classList.contains("open");
-  if (previewIsOpen && hasOrientationReversingLinks(state.surface)) {
-    openPanel("previewWarning");
-  }
-}
-
 function clearForSurfaceChange() {
   state.objects = [];
   state.undoStack = [];
@@ -75,37 +63,65 @@ function clearForSurfaceChange() {
   updateHistoryButtons();
 }
 
-export function applySurface(next, message = "Surface updated.", confirmMessage = "Changing the surface clears the existing drawing. Continue?") {
+function remapObjectsToSurface(oldSurface, newSurface) {
+  for (const object of state.objects) {
+    for (const point of object.points || []) {
+      let uv = Number.isFinite(point.u) && Number.isFinite(point.v) ? { u: point.u, v: point.v } : worldToBasis(point, oldSurface);
+      if (!uv) continue;
+      point.u = uv.u;
+      point.v = uv.v;
+      const world = basisToWorld(uv, newSurface);
+      point.x = world.x;
+      point.y = world.y;
+    }
+  }
+}
+
+export function applySurface(next, message = "Surface updated.", confirmMessage = "Update surface and keep drawing attached to the cell?") {
   const error = validate(next);
   if (error) { showStatus(error); writeSurfaceControls(); return false; }
   if (surfacesEqual(next, state.surface)) {
     state.surface = cloneSurface(next);
     writeSurfaceControls();
     scheduleAutosave();
-    showPreviewNoticeIfOpenPreviewBecameReversed();
     showStatus("Edge links updated.");
     requestRender();
+    drawPreview3d();
     return true;
   }
-  if (state.objects.length && !window.confirm(confirmMessage)) { writeSurfaceControls(); showStatus("Surface unchanged."); return false; }
+
   const anchorBefore = anchorForCurrentView(state.surface);
-  if (state.objects.length) clearForSurfaceChange();
+  const oldSurface = cloneSurface(state.surface);
+  let shouldClear = false;
+  if (state.objects.length) {
+    const keep = window.confirm(`${confirmMessage}
+
+OK = keep drawings attached to their cell coordinates.
+Cancel = choose clear/cancel.`);
+    if (!keep) {
+      shouldClear = window.confirm(`Clear the drawing and update the surface instead?
+
+OK = clear drawing.
+Cancel = leave surface unchanged.`);
+      if (!shouldClear) { writeSurfaceControls(); showStatus("Surface unchanged."); return false; }
+    }
+  }
+
+  if (shouldClear) clearForSurfaceChange();
   state.surface = cloneSurface(next);
+  if (!shouldClear && state.objects.length) remapObjectsToSurface(oldSurface, state.surface);
   const quality = analyzeSurfaceQuality(state.surface);
   if (quality.extreme || quality.dense) showStatus(qualityMessage(quality));
 
-  // Keep the currently viewed cell's origin anchored on screen. This makes
-  // edits to a2/b2 feel like the cell grows from its visible lower-left
-  // origin, even when the user has panned far away from the home cell.
   const anchorAfter = displacement(state.surface, anchorBefore.i, anchorBefore.j);
   state.view.x += anchorAfter.x - anchorBefore.point.x;
   state.view.y += anchorAfter.y - anchorBefore.point.y;
 
   writeSurfaceControls();
   scheduleAutosave();
-  showPreviewNoticeIfOpenPreviewBecameReversed();
-  showStatus(message);
+  showStatus(shouldClear ? "Surface updated and drawing cleared." : message);
   requestRender();
+  drawPreview3d();
   return true;
 }
 
@@ -223,7 +239,7 @@ function surfaceForImage() {
 
 export function fitSurfaceToImage() {
   if (!state.background.image) return showStatus("Upload an image first.");
-  applySurface(surfaceForImage(), "Surface fitted to image.", "Fitting the surface to the image will clear the existing drawing. Continue?");
+  applySurface(surfaceForImage(), "Surface fitted to image.", "Fit the surface to the image and keep drawings attached to their cell coordinates?");
 }
 
 export function loadImageFile(file) {
@@ -321,7 +337,6 @@ function applyTopologyLinks(links, message) {
   state.surface = cloneSurface({ ...state.surface, edgeLinks: links });
   writeSurfaceControls();
   scheduleAutosave();
-  showPreviewNoticeIfOpenPreviewBecameReversed();
   showStatus(message);
   requestRender();
 }

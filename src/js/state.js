@@ -24,6 +24,19 @@ export const state = {
 
   tool: "pen",
   eraserMode: "object",
+  shapeMode: "outline",
+  selectMode: "transform",
+  selectedObjectId: null,
+  selectedObjectIds: [],
+  selectionOffset: { i: 0, j: 0 },
+  selectionBox: null,
+  selectionGroupRotation: 0,
+  selectionGroupFrame: null,
+  selectedNodeIndex: null,
+  selectedHandleKind: null,
+  pathInsertMode: false,
+  nextGroupId: 1,
+  touchModifiers: { constrain: false, center: false, snap: false },
   penSize: 4,
   dotSize: 20,
   eraserSize: 20,
@@ -45,7 +58,7 @@ export const state = {
   activeLayerId: "layer-1",
   nextLayerId: 2,
 
-  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, twist: 0, transparent: true, opacity: 0.8, dragging: false, last: null, enhanced: true },
+  preview: { yaw: -0.74, pitch: 0.45, zoom: 1.0, twist: 0, transparent: false, opacity: 1.0, dragging: false, last: null, enhanced: true, showGrid: true, displayMode: "solid", silhouette: false },
   renderQueued: false,
   statusTimer: null,
   autosaveTimer: null,
@@ -58,7 +71,5 @@ export const state = {
   ui: {}
 };
 
-export function cloneObject(object) {
-  return { ...object, points: object.points.map(point => ({ ...point })) };
-}
+export function cloneObject(object) { return structuredClone(object); }
 export function cloneObjects(objects) { return objects.map(cloneObject); }

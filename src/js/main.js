@@ -1,7 +1,7 @@
 // App bootstrap: wires modules together and keeps the UI behavior calm and predictable.
 import { collectDom, closeFloatingPanelsOnly, closePanels, openPanel, showStatus } from "./dom.js";
 import { state } from "./state.js";
-import { chooseTool, handleSpace, handleTemporaryDot, movePointer, saveCurrentSize, setEraserMode, startPointer, stopPointer } from "./drawing.js";
+import { addPathPoint, applySelectedColor, applySelectedSize, applySelectionDimensions, chooseTool, deleteSelectedPathPoint, deleteSelection, duplicateSelection, flipSelection, groupSelection, handleSpace, handleTemporaryDot, movePointer, saveCurrentSize, setEraserMode, setSelectMode, setShapeMode, startPointer, stopPointer, syncShapeControls, toggleSelectedPathPointMode, toggleTouchModifier, ungroupSelection } from "./drawing.js";
 import { clearDrawing, redo, undo, updateHistoryButtons } from "./history.js";
 import { drawPreview3d, initPreview3d, resetPreviewAngle } from "./preview3d.js";
 import { requestRender, resizeCanvas } from "./render2d.js";
@@ -13,22 +13,44 @@ collectDom();
 ensureLayerModel();
 initPreview3d();
 
+function syncResponsiveMode() {
+  document.body.classList.toggle("compact-ui", window.matchMedia("(max-width: 760px)").matches);
+  document.body.classList.toggle("touch-ui", window.matchMedia("(pointer: coarse)").matches);
+}
+
+function previewOpacityForMode(mode) {
+  if (mode === "xray") return 0.34;
+  if (mode === "transparent") return 0.72;
+  return 1.0;
+}
+
+function setPreviewMode(mode) {
+  state.preview.displayMode = ["transparent", "xray", "front"].includes(mode) ? mode : "solid";
+  state.preview.transparent = state.preview.displayMode !== "solid" && state.preview.displayMode !== "front";
+  state.preview.opacity = previewOpacityForMode(state.preview.displayMode);
+  syncPreviewControls();
+  drawPreview3d();
+}
+
+function syncPreviewControls() {
+  const mode = state.preview.displayMode || (state.preview.transparent ? "transparent" : "solid");
+  if (state.ui.preview3dTransparencyInput) state.ui.preview3dTransparencyInput.checked = mode === "transparent" || mode === "xray";
+  if (state.ui.preview3dGridInput) state.ui.preview3dGridInput.checked = state.preview.showGrid !== false;
+  if (state.ui.previewSilhouetteInput) state.ui.previewSilhouetteInput.checked = state.preview.silhouette === true;
+  for (const [id, value] of [["previewModeSolidButton", "solid"], ["previewModeTransparentButton", "transparent"], ["previewModeXrayButton", "xray"], ["previewModeFrontButton", "front"]]) {
+    if (state.ui[id]) state.ui[id].classList.toggle("active", mode === value);
+  }
+}
+
 function refreshSizeInput() {
   state.ui.sizeInput.value = state.tool === "erase" ? state.eraserSize : state.tool === "dot" ? state.dotSize : state.penSize;
 }
 function blurSizeInput() { state.ui.sizeInput.blur(); saveCurrentSize(); }
 
-function syncPreviewTransparencyUi() {
-  if (!state.ui.preview3dTransparencyInput) return;
-  state.ui.preview3dTransparencyInput.checked = state.preview.transparent !== false;
-  state.preview.opacity = state.preview.transparent === false ? 1.0 : 0.8;
-}
+function syncPreviewTransparencyUi() { syncPreviewControls(); }
 
 function setPreviewTransparency(enabled) {
-  state.preview.transparent = Boolean(enabled);
-  state.preview.opacity = state.preview.transparent ? 0.8 : 1.0;
-  syncPreviewTransparencyUi();
-  drawPreview3d();
+  setPreviewMode(enabled ? "transparent" : "solid");
 }
 
 function openPreview3dWithNoticeIfNeeded() {
@@ -67,10 +89,12 @@ function handleKeyDown(event) {
   else if (code === "Digit3" || key === "3" || key === "o") chooseTool("ellipse");
   else if (code === "Digit4" || key === "4" || key === "r") chooseTool("rectangle");
   else if (code === "Digit5" || key === "5") chooseTool("dot");
-  else if (code === "Digit6" || key === "6") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
-  else if (code === "Digit7" || key === "7" || key === "v") chooseTool("pan");
-  else if (code === "Digit8" || key === "8") chooseTool("hom");
+  else if (code === "Digit6" || key === "6" || key === "s") chooseTool("select");
+  else if (code === "Digit7" || key === "7") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
+  else if (code === "Digit8" || key === "8" || key === "v") chooseTool("pan");
+  else if (code === "Digit9" || key === "9") chooseTool("hom");
   else if (key === "e") { if (event.shiftKey) setEraserMode(state.eraserMode === "object" ? "rub" : "object"); chooseTool("erase"); }
+  else if (key === "delete" || key === "backspace") { if (!deleteSelectedPathPoint()) deleteSelection(); }
   else if (key === "c" && event.shiftKey) resetEverything();
   else if (key === "c") clearDrawing();
   else if (key === "f") fitCellToView();
@@ -91,6 +115,7 @@ function wireToolbar() {
   state.ui.ellipseButton.onclick = () => chooseTool("ellipse");
   state.ui.rectangleButton.onclick = () => chooseTool("rectangle");
   state.ui.dotButton.onclick = () => chooseTool("dot");
+  if (state.ui.selectButton) state.ui.selectButton.onclick = () => chooseTool("select");
   state.ui.eraseButton.onclick = () => chooseTool("erase");
   state.ui.homButton.onclick = () => chooseTool("hom");
   state.ui.panButton.onclick = () => chooseTool("pan");
@@ -103,12 +128,37 @@ function wireToolbar() {
   state.ui.imageButton.onclick = () => { renderLayerPanel(); openPanel("image"); };
   state.ui.preview3dButton.onclick = openPreview3dWithNoticeIfNeeded;
   state.ui.preview3dCloseButton.onclick = () => state.ui.preview3dPanel.classList.remove("open");
-  if (state.ui.preview3dWarningCloseButton) state.ui.preview3dWarningCloseButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
-  if (state.ui.preview3dWarningCancelButton) state.ui.preview3dWarningCancelButton.onclick = () => state.ui.preview3dWarningPanel.classList.remove("open");
-  if (state.ui.preview3dWarningViewButton) state.ui.preview3dWarningViewButton.onclick = openPreview3dWithNoticeIfNeeded;
   if (state.ui.preview3dTransparencyInput) state.ui.preview3dTransparencyInput.onchange = e => setPreviewTransparency(e.target.checked);
+  if (state.ui.preview3dGridInput) state.ui.preview3dGridInput.onchange = e => { state.preview.showGrid = e.target.checked; drawPreview3d(); };
+  if (state.ui.previewSilhouetteInput) state.ui.previewSilhouetteInput.onchange = e => { state.preview.silhouette = e.target.checked; drawPreview3d(); };
+  if (state.ui.preview3dResetViewButton) state.ui.preview3dResetViewButton.onclick = resetPreviewAngle;
+  if (state.ui.preview3dExportButton) state.ui.preview3dExportButton.onclick = () => {
+    const link = Object.assign(document.createElement("a"), { href: state.ui.preview3dCanvas.toDataURL("image/png"), download: "torus-3d-preview.png" });
+    link.click();
+  };
+  if (state.ui.previewModeSolidButton) state.ui.previewModeSolidButton.onclick = () => setPreviewMode("solid");
+  if (state.ui.previewModeTransparentButton) state.ui.previewModeTransparentButton.onclick = () => setPreviewMode("transparent");
+  if (state.ui.previewModeXrayButton) state.ui.previewModeXrayButton.onclick = () => setPreviewMode("xray");
+  if (state.ui.previewModeFrontButton) state.ui.previewModeFrontButton.onclick = () => setPreviewMode("front");
   if (state.ui.previewTwistInput) state.ui.previewTwistInput.oninput = e => { state.preview.twist = Number(e.target.value) || 0; drawPreview3d(); };
   if (state.ui.previewTwistResetButton) state.ui.previewTwistResetButton.onclick = () => { state.preview.twist = 0; state.ui.previewTwistInput.value = "0"; drawPreview3d(); };
+  if (state.ui.shapeOutlineButton) state.ui.shapeOutlineButton.onclick = () => setShapeMode("outline");
+  if (state.ui.shapeFillButton) state.ui.shapeFillButton.onclick = () => setShapeMode("fill");
+  if (state.ui.selectTransformButton) state.ui.selectTransformButton.onclick = () => setSelectMode("transform");
+  if (state.ui.selectPointsButton) state.ui.selectPointsButton.onclick = () => setSelectMode("points");
+  if (state.ui.touchConstrainButton) state.ui.touchConstrainButton.onclick = () => toggleTouchModifier("constrain");
+  if (state.ui.touchCenterButton) state.ui.touchCenterButton.onclick = () => toggleTouchModifier("center");
+  if (state.ui.touchSnapButton) state.ui.touchSnapButton.onclick = () => toggleTouchModifier("snap");
+  if (state.ui.duplicateSelectionButton) state.ui.duplicateSelectionButton.onclick = duplicateSelection;
+  if (state.ui.deleteSelectionButton) state.ui.deleteSelectionButton.onclick = deleteSelection;
+  if (state.ui.flipSelectionHButton) state.ui.flipSelectionHButton.onclick = () => flipSelection("h");
+  if (state.ui.flipSelectionVButton) state.ui.flipSelectionVButton.onclick = () => flipSelection("v");
+  if (state.ui.groupSelectionButton) state.ui.groupSelectionButton.onclick = groupSelection;
+  if (state.ui.ungroupSelectionButton) state.ui.ungroupSelectionButton.onclick = ungroupSelection;
+  if (state.ui.addPathPointButton) state.ui.addPathPointButton.onclick = addPathPoint;
+  if (state.ui.togglePathPointModeButton) state.ui.togglePathPointModeButton.onclick = toggleSelectedPathPointMode;
+  if (state.ui.deletePathPointButton) state.ui.deletePathPointButton.onclick = deleteSelectedPathPoint;
+  if (state.ui.applySelectionSizeButton) state.ui.applySelectionSizeButton.onclick = () => applySelectionDimensions(state.ui.selectionWidthInput.value, state.ui.selectionHeightInput.value);
   state.ui.helpButton.onclick = () => openPanel("help");
   if (state.ui.helpCloseButton) state.ui.helpCloseButton.onclick = () => state.ui.helpPanel.classList.remove("open");
   if (state.ui.surfaceCloseButton) state.ui.surfaceCloseButton.onclick = () => state.ui.surfacePanel.classList.remove("open");
@@ -156,7 +206,9 @@ function wireCanvas() {
   state.canvas.addEventListener("pointercancel", stopPointer);
   state.canvas.addEventListener("wheel", e => { e.preventDefault(); setZoom(state.view.zoom * Math.exp(-e.deltaY * 0.0018), pointerFromEvent(e)); }, { passive: false });
   state.canvas.addEventListener("pointerdown", blurSizeInput, { capture: true });
-  state.ui.sizeInput.addEventListener("change", () => { saveCurrentSize(); refreshSizeInput(); });
+  state.ui.sizeInput.addEventListener("change", () => { saveCurrentSize(); applySelectedSize(state.ui.sizeInput.value); refreshSizeInput(); });
+  state.ui.sizeInput.addEventListener("input", () => { if (state.tool === "select") applySelectedSize(state.ui.sizeInput.value); });
+  state.ui.colorInput.addEventListener("input", () => { if (state.tool === "select") applySelectedColor(state.ui.colorInput.value); });
 }
 function pointerFromEvent(event) {
   const box = state.canvas.getBoundingClientRect();
@@ -172,12 +224,12 @@ document.addEventListener("keyup", event => {
   handleSpace(event, false);
   handleTemporaryDot(event, false);
 });
-window.addEventListener("resize", () => { resizeCanvas(); drawPreview3d(); });
+window.addEventListener("resize", () => { syncResponsiveMode(); syncShapeControls(); resizeCanvas(); drawPreview3d(); });
 // Leaving the Size block commits the number, so shortcuts immediately work again.
 document.addEventListener("pointerdown", event => {
   if (!state.ui.sizeBlock.contains(event.target)) blurSizeInput();
 }, { capture: true });
 
-writeSurfaceControls(); syncEdgeUi(); syncImageUi(); renderLayerPanel(); syncPreviewTransparencyUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas();
+syncResponsiveMode(); writeSurfaceControls(); syncEdgeUi(); syncImageUi(); renderLayerPanel(); syncPreviewTransparencyUi(); syncZoomSlider(); updateHistoryButtons(); resizeCanvas(); syncShapeControls();
 chooseTool("pen"); setEraserMode("object");
-restoreAutosave().then(() => { refreshSizeInput(); requestRender(); drawPreview3d(); });
+restoreAutosave().then(() => { refreshSizeInput(); syncPreviewControls(); requestRender(); drawPreview3d(); });

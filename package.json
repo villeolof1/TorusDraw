@@ -5,7 +5,8 @@
   "private": true,
   "scripts": {
     "start": "vite --host 0.0.0.0",
-    "dev": "vite --host 0.0.0.0"
+    "dev": "vite --host 0.0.0.0",
+    "test": "node tests/topology.test.mjs && node tests/storage-roundtrip.test.mjs && node tests/layout-smoke.test.mjs"
   },
   "devDependencies": {
     "vite": "latest"
