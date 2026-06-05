@@ -1,7 +1,7 @@
 /* Floating panels. Panels open near their launch buttons and avoid the toolbar, top bar, zoom rail, and corner buttons. */
 .panel {
   position: absolute;
-  z-index: 10;
+  z-index: 30;
   right: 110px;
   top: 112px;
   width: 330px;
@@ -19,7 +19,7 @@
   transform: translateY(8px) scale(.985);
   transition: opacity 160ms ease, transform 160ms ease;
 }
-.panel.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); }
+.panel.open { opacity: 1; pointer-events: auto; transform: translateY(0) scale(1); z-index: 40; }
 #surfacePanel,
 .image-panel {
   left: 22px;
@@ -195,7 +195,7 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px; border-radius: 9
 }
 .layer-ghost {
   position: fixed;
-  z-index: 1000;
+  z-index: 60;
   pointer-events: none;
   display: grid;
   grid-template-columns: 54px minmax(0, 1fr) auto 28px;
@@ -625,3 +625,8 @@ kbd { display: inline-block; min-width: 26px; padding: 3px 8px; border-radius: 9
   }
   .preview-canvas-wrap { min-height: 260px; }
 }
+
+/* Open panels and drag previews must stay above the bottom tool dock on compact screens. */
+.panel.open { z-index: 40; }
+.layer-ghost { z-index: 60; }
+.layer-drop-placeholder { position: relative; z-index: 1; }

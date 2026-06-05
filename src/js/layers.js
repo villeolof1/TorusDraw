@@ -366,6 +366,37 @@ export function renderLayerPanel(updateThumbnails = true) {
     slider.setAttribute("aria-label", "Layer opacity");
 
     row.append(main, slider);
+
+    // Wire the freshly-rendered card. A previous refactor rebuilt layer rows
+    // with safe DOM nodes but accidentally left the new controls decorative.
+    // Keep row drag/select separate from card controls so sliders/buttons never
+    // start a drag or switch layers unexpectedly.
+    row.addEventListener("pointerdown", event => startLayerPress(event, layer.id));
+    row.addEventListener("click", event => {
+      if (event.target.closest(".layer-eye, .layer-delete, .layer-opacity-slider")) return;
+      selectLayer(layer.id);
+    });
+    eye.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      toggleLayerVisibility(layer.id);
+    });
+    del.addEventListener("click", event => {
+      event.preventDefault();
+      event.stopPropagation();
+      removeLayer(layer.id);
+    });
+    slider.addEventListener("pointerdown", event => event.stopPropagation());
+    slider.addEventListener("click", event => event.stopPropagation());
+    slider.addEventListener("input", event => {
+      event.stopPropagation();
+      setLayerOpacity(layer.id, event.currentTarget.value);
+    });
+    slider.addEventListener("change", event => {
+      event.stopPropagation();
+      scheduleAutosave();
+    });
+
     state.ui.layerList.appendChild(row);
     if (updateThumbnails) renderThumbnailInto(thumb, layer);
   });
@@ -388,11 +419,12 @@ function renderImageLayerCard() {
 }
 
 function startLayerPress(event, layerId) {
-  if (event.button !== 0 || event.target.closest(".layer-control, .layer-eye, .layer-delete, .layer-opacity-slider")) return;
+  if (event.button !== 0 || event.target.closest(".layer-eye, .layer-delete, .layer-opacity-slider, input, button")) return;
   const row = event.currentTarget;
   const list = state.ui.layerList;
   if (!list || !row) return;
   event.preventDefault();
+  try { row.setPointerCapture?.(event.pointerId); } catch {}
 
   // Mark it active without re-rendering the list. Re-rendering here would
   // destroy the DOM node that is being dragged.
@@ -453,22 +485,38 @@ function startLayerPress(event, layerId) {
     movePlaceholder(e.clientY);
   };
 
-  const up = () => {
-    window.removeEventListener("pointermove", move);
-    window.removeEventListener("pointerup", up);
-    if (!dragging) {
-      selectLayer(layerId);
-      return;
-    }
+  const cleanupDragDom = () => {
     ghost?.remove();
     placeholder?.remove();
     row.style.display = "";
     row.classList.remove("drag-source");
+  };
+
+  const up = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
+    try { row.releasePointerCapture?.(event.pointerId); } catch {}
+    if (!dragging) {
+      selectLayer(layerId);
+      return;
+    }
+    cleanupDragDom();
     moveDrawingLayerToVisualIndex(layerId, currentTarget);
+  };
+
+  const cancel = () => {
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+    window.removeEventListener("pointercancel", cancel);
+    try { row.releasePointerCapture?.(event.pointerId); } catch {}
+    cleanupDragDom();
+    renderLayerPanel();
   };
 
   window.addEventListener("pointermove", move);
   window.addEventListener("pointerup", up, { once: true });
+  window.addEventListener("pointercancel", cancel, { once: true });
 }
 
 function renderThumbnailInto(container, layer) {
