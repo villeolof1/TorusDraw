@@ -886,6 +886,22 @@ function drawTextureEraseCuts(ctx, object, domain, width, height, pixelsPerWorld
   ctx.restore();
 }
 
+
+function canvasForRasterDisplay(object, canvas) {
+  const tint = object.tintColor;
+  if (!tint || !canvas) return canvas;
+  const out = document.createElement("canvas");
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const outCtx = out.getContext("2d");
+  outCtx.drawImage(canvas, 0, 0);
+  outCtx.globalCompositeOperation = "source-in";
+  outCtx.fillStyle = tint;
+  outCtx.fillRect(0, 0, out.width, out.height);
+  outCtx.globalCompositeOperation = "source-over";
+  return out;
+}
+
 function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
   const pixelsPerU = width;
   const pixelsPerV = height;
@@ -916,8 +932,9 @@ function drawObjectsToTexture(ctx, domain, width, height, layer = null) {
         const x = texturePointRaw(uvX, width, height);
         const y = texturePointRaw(uvY, width, height);
         ctx.save();
+        const displayCanvas = canvasForRasterDisplay(object, canvas);
         ctx.transform(x.x - o.x, x.y - o.y, y.x - o.x, y.y - o.y, o.x, o.y);
-        ctx.drawImage(canvas, 0, 0, 1, 1);
+        ctx.drawImage(displayCanvas, 0, 0, 1, 1);
         ctx.restore();
       }
       ctx.restore();

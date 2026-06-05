@@ -158,6 +158,22 @@ function rasterFramePoints(object, offset) {
   const yAxis = { x: yCorner.x - origin.x, y: yCorner.y - origin.y };
   return { origin, xCorner, yCorner, xAxis, yAxis, fourth: { x: xCorner.x + yAxis.x, y: xCorner.y + yAxis.y } };
 }
+
+function canvasForRasterDisplay(object, canvas) {
+  const tint = object.tintColor;
+  if (!tint || !canvas) return canvas;
+  const out = document.createElement("canvas");
+  out.width = canvas.width;
+  out.height = canvas.height;
+  const outCtx = out.getContext("2d");
+  outCtx.drawImage(canvas, 0, 0);
+  outCtx.globalCompositeOperation = "source-in";
+  outCtx.fillStyle = tint;
+  outCtx.fillRect(0, 0, out.width, out.height);
+  outCtx.globalCompositeOperation = "source-over";
+  return out;
+}
+
 function rasterFrameBasePoints(object) {
   const pts = object.points || [];
   if (!pts[0] || !pts[1]) return [];
@@ -331,8 +347,9 @@ export function drawObject(object, offset = { i: 0, j: 0 }, preview = false) {
     const frame = rasterFramePoints(object, offset);
     const canvas = getRasterCanvas(object, requestRender);
     if (frame && canvas) {
+      const displayCanvas = canvasForRasterDisplay(object, canvas);
       ctx.transform(frame.xAxis.x, frame.xAxis.y, frame.yAxis.x, frame.yAxis.y, frame.origin.x, frame.origin.y);
-      ctx.drawImage(canvas, 0, 0, 1, 1);
+      ctx.drawImage(displayCanvas, 0, 0, 1, 1);
     }
     ctx.restore();
     return;

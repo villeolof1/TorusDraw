@@ -1437,6 +1437,7 @@ function recolorRasterObject(object, color) {
   if (!canvas) {
     object.color = color;
     object.fillColor = color;
+    object.tintColor = color;
     object.pendingRasterColor = color;
     return false;
   }
@@ -1451,10 +1452,11 @@ function recolorRasterObject(object, color) {
     data[i + 2] = rgb.b;
     changed = true;
   }
-  if (!changed) return false;
-  ctx.putImageData(image, 0, 0);
   object.color = color;
   object.fillColor = color;
+  object.tintColor = color;
+  if (!changed) return true;
+  ctx.putImageData(image, 0, 0);
   object.imageDataUrl = canvas.toDataURL("image/png");
   canvas.__sourceDataUrl = object.imageDataUrl;
   object.rasterWidth = canvas.width;
