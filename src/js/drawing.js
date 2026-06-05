@@ -955,9 +955,14 @@ function selectionHandleAt(worldPoint) {
 
   const bounds = selectionBounds(objects);
   if (!bounds) return null;
-  const x0 = bounds.minX, x1 = bounds.maxX, y0 = bounds.minY, y1 = bounds.maxY;
-  const cx = bounds.cx, cy = bounds.cy;
-  const groupAngle = state.selectionGroupRotation || 0;
+  const frame = state.selectionGroupFrame && objects.length > 1 ? state.selectionGroupFrame : null;
+  const cx = frame ? frame.cx : bounds.cx;
+  const cy = frame ? frame.cy : bounds.cy;
+  const x0 = frame ? frame.cx - frame.width / 2 : bounds.minX;
+  const x1 = frame ? frame.cx + frame.width / 2 : bounds.maxX;
+  const y0 = frame ? frame.cy - frame.height / 2 : bounds.minY;
+  const y1 = frame ? frame.cy + frame.height / 2 : bounds.maxY;
+  const groupAngle = frame ? (frame.rotation || 0) : (state.selectionGroupRotation || 0);
   const groupCenter = { x: cx, y: cy };
   const handles = [
     ["nw", rotateAround({ x: x0, y: y0 }, groupCenter, groupAngle)], ["n", rotateAround({ x: cx, y: y0 }, groupCenter, groupAngle)], ["ne", rotateAround({ x: x1, y: y0 }, groupCenter, groupAngle)],
@@ -1113,8 +1118,12 @@ function resizeSelectionFromHandle(worldPoint, event) {
     return true;
   }
 
-  const { minX, minY, maxX, maxY, cx, cy } = selectSession.startBounds;
-  const groupAngle = selectSession.startGroupRotation || 0;
+  const fallback = selectSession.startBounds;
+  const startFrame = selectSession.startGroupFrame || { cx: fallback.cx, cy: fallback.cy, width: fallback.width, height: fallback.height, rotation: selectSession.startGroupRotation || 0 };
+  const cx = startFrame.cx, cy = startFrame.cy;
+  const minX = cx - startFrame.width / 2, maxX = cx + startFrame.width / 2;
+  const minY = cy - startFrame.height / 2, maxY = cy + startFrame.height / 2;
+  const groupAngle = startFrame.rotation || 0;
   const groupCenter = { x: cx, y: cy };
   const localMap = {
     nw: { x: minX, y: minY }, n: { x: cx, y: minY }, ne: { x: maxX, y: minY },
@@ -1129,6 +1138,23 @@ function resizeSelectionFromHandle(worldPoint, event) {
     const scaledLocal = { x: resize.anchor.x + (lp.x - resize.anchor.x) * resize.sx, y: resize.anchor.y + (lp.y - resize.anchor.y) * resize.sy };
     return rotateAround(scaledLocal, groupCenter, groupAngle);
   }, vector => transformVectorInFrame(vector, resize.sx, resize.sy, groupAngle));
+
+  if (currentSelectionIds().length > 1) {
+    const centerLocal = { x: cx, y: cy };
+    const newCenterLocal = {
+      x: resize.anchor.x + (centerLocal.x - resize.anchor.x) * resize.sx,
+      y: resize.anchor.y + (centerLocal.y - resize.anchor.y) * resize.sy
+    };
+    const newCenter = rotateAround(newCenterLocal, groupCenter, groupAngle);
+    state.selectionGroupRotation = groupAngle;
+    state.selectionGroupFrame = {
+      cx: newCenter.x,
+      cy: newCenter.y,
+      width: Math.max(0.0001, Math.abs(startFrame.width * resize.sx)),
+      height: Math.max(0.0001, Math.abs(startFrame.height * resize.sy)),
+      rotation: groupAngle
+    };
+  }
   return true;
 }
 
