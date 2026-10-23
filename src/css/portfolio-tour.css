@@ -1,0 +1,10 @@
+.portfolio-tour{position:fixed;top:94px;left:22px;z-index:30;width:min(330px,calc(100vw - 44px));box-sizing:border-box;padding:18px;border:1px solid #d9dedb;border-radius:18px;background:#fffffff5;color:#252f2a;box-shadow:0 12px 40px #192c231c;font:14px/1.55 system-ui,sans-serif}
+.portfolio-tour-heading{display:flex;align-items:center;justify-content:space-between;gap:12px;font-size:17px}
+.portfolio-tour button{font:inherit;cursor:pointer;color:inherit}
+.portfolio-tour-heading button{background:none;border:0;min-width:36px;min-height:36px;font-size:24px}
+.portfolio-tour ol{padding-left:20px;margin:10px 0 16px}
+.portfolio-tour li+li{margin-top:9px}
+.portfolio-tour li button{background:#edf4f0;border:1px solid #cad8ce;border-radius:6px;padding:3px 6px}
+.portfolio-tour a{font-size:12px;color:#275b43;text-underline-offset:3px}
+.portfolio-tour :focus-visible{outline:3px solid #37765a;outline-offset:3px}
+@media(max-width:700px){.portfolio-tour{top:94px;left:12px;width:min(330px,calc(100vw - 24px));padding:14px;font-size:12px;max-height:calc(100dvh - 230px);overflow:auto}.portfolio-tour-heading{font-size:15px}}
